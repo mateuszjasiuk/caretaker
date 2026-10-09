@@ -142,6 +142,8 @@ auto_merge = false
 # set; `text` uses labels; `ascii` uses stable single-cell characters.
 [display]
 icons = "nerd" # nerd | text | ascii
+# List every open worktree in the bar, after the icons, coloured by its agents.
+agent_strip = true
 
 # The diff viewer (deck `v` and the stack `d` preview). All optional.
 [diff]
@@ -266,6 +268,10 @@ worktree shows on the right.
 
 Press **`alt+a`** to open the agent board for every active worktree. From there, `n` creates an
 agent, `enter` focuses one, `r` restarts it in place, and `d` removes it.
+
+The bar lists every open worktree after its icons, in a fixed order, coloured by what its agents
+are doing: yellow while working, green `✓` when done and unread, red `!` when waiting for you, and
+dim when idle. The current worktree is underlined. Click a name to jump there.
 
 Press **`alt+n`** (from anywhere) to jump straight into the session of the agent that most needs
 you — agents waiting on input first, then unread completions — without opening the board; pressing

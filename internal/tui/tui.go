@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -295,8 +296,9 @@ type Model struct {
 
 	// keys are the reserved keystrokes (not forwarded to embedded sessions),
 	// fully defaulted by config.Load before they reach here.
-	keys     config.Keys
-	iconMode string
+	keys       config.Keys
+	iconMode   string
+	agentStrip bool // list open worktrees after the bar icons
 
 	screen     screen
 	current    *workspaceRef
@@ -549,6 +551,7 @@ func New(ctrl *Controller, mgr *session.Manager) Model {
 		ctrl: ctrl, mgr: mgr, state: state.Load(),
 		keys:           ctrl.Keys(),
 		iconMode:       ctrl.DisplayIcons(),
+		agentStrip:     ctrl.AgentStrip(),
 		usageThreshold: ctrl.UsageThreshold(),
 		plasma:         plasmaField, plasmaWidthPct: pc.Width,
 		filter: filter, nameInput: name, rootInput: rootInput,
@@ -1787,50 +1790,105 @@ func (m Model) attnSummary() (waiting, done int) {
 	return len(waitKeys), len(doneKeys)
 }
 
+// agentGroup is one worktree's agents, as shown by the agent board and the
+// bar's agent strip.
+type agentGroup struct {
+	key, repo, worktree, path string
+	agents                    []boardRow
+	attn                      attnLevel // highest attention among agents
+	busy                      bool      // some agent is working
+	opened                    int64
+}
+
+// agentGroup collects the agent rows of one open workspace, in pool order. It
+// reports false when the workspace isn't open.
+func (m Model) agentGroup(key, repoName, wtName, path string) (agentGroup, bool) {
+	ws, ok := m.mgr.Workspace(key)
+	if !ok {
+		if m.current == nil || m.current.key != key || m.current.ws == nil {
+			return agentGroup{}, false
+		}
+		ws = m.current.ws
+	}
+	g := agentGroup{key: key, repo: repoName, worktree: wtName, path: path}
+	if m.state != nil {
+		g.opened = m.state.Opened(key)
+	}
+	for i, a := range ws.Agents {
+		pid := a.Pid()
+		attn := m.agentAttn(pid)
+		provider := normalizedProvider(a.Provider)
+		g.agents = append(g.agents, boardRow{
+			isAgent: true, key: key, repo: repoName, worktree: wtName, path: path,
+			agentIdx: i, pid: pid, label: agentTitle(provider, a.Title), provider: provider,
+			status: m.boardStatus(pid, attn), attn: attn,
+		})
+		if attn > g.attn {
+			g.attn = attn
+		}
+		if m.agentStatus[pid].Status == "busy" {
+			g.busy = true
+		}
+	}
+	return g, true
+}
+
+// stripGroups lists every open workspace for the bar's agent strip. Unlike the
+// board and the deck, the order is fixed (repos in deck order, worktrees by
+// name, then the home workspace) so items don't move when you switch worktrees
+// or an agent's status changes; only their colour does.
+func (m Model) stripGroups() []agentGroup {
+	active := slices.Clone(m.active)
+	repoIdx := map[string]int{}
+	for _, it := range active {
+		if _, ok := repoIdx[it.repo.Name]; !ok {
+			repoIdx[it.repo.Name] = len(repoIdx)
+		}
+	}
+	sort.SliceStable(active, func(i, j int) bool {
+		if ri, rj := repoIdx[active[i].repo.Name], repoIdx[active[j].repo.Name]; ri != rj {
+			return ri < rj
+		}
+		return active[i].view.WT.Name < active[j].view.WT.Name
+	})
+
+	seen := map[string]bool{}
+	var groups []agentGroup
+	add := func(key, repoName, wtName, path string) {
+		if key == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		if g, ok := m.agentGroup(key, repoName, wtName, path); ok {
+			groups = append(groups, g)
+		}
+	}
+	for _, it := range active {
+		add(wsKey(it.repo.Name, it.view.WT.Name), it.repo.Name, it.view.WT.Name, it.view.WT.Path)
+	}
+	if m.current != nil {
+		add(m.current.key, m.current.repo, m.current.worktree, m.current.path)
+	}
+	if m.homeWSKey != "" {
+		add(m.homeWSKey, "~", "config", m.homeWSPath)
+	}
+	return groups
+}
+
 // buildBoard constructs the agent board: every agent of every open workspace,
 // grouped under non-navigable worktree header rows, with worktrees (and agents
 // within them) needing attention sorted first and a trailing "+ new agent" row.
 // nav maps cursor positions to indices in rows.
 func (m Model) buildBoard() (rows []boardRow, nav []int) {
-	type group struct {
-		key, repo, worktree, path string
-		agents                    []boardRow
-		attn                      attnLevel
-		opened                    int64
-	}
-
 	seen := map[string]bool{}
-	var groups []group
+	var groups []agentGroup
 	addGroup := func(key, repoName, wtName, path string) {
 		if key == "" || seen[key] {
 			return
 		}
 		seen[key] = true
-		ws, ok := m.mgr.Workspace(key)
-		if !ok {
-			if m.current == nil || m.current.key != key || m.current.ws == nil {
-				return
-			}
-			ws = m.current.ws
-		}
-		g := group{key: key, repo: repoName, worktree: wtName, path: path}
-		if m.state != nil {
-			g.opened = m.state.Opened(key)
-		}
-		for i, a := range ws.Agents {
-			pid := a.Pid()
-			attn := m.agentAttn(pid)
-			provider := normalizedProvider(a.Provider)
-			g.agents = append(g.agents, boardRow{
-				isAgent: true, key: key, repo: repoName, worktree: wtName, path: path,
-				agentIdx: i, pid: pid, label: agentTitle(provider, a.Title), provider: provider,
-				status: m.boardStatus(pid, attn), attn: attn,
-			})
-			if attn > g.attn {
-				g.attn = attn
-			}
-		}
-		if len(g.agents) == 0 {
+		g, ok := m.agentGroup(key, repoName, wtName, path)
+		if !ok || len(g.agents) == 0 {
 			return
 		}
 		sort.SliceStable(g.agents, func(i, j int) bool { return g.agents[i].attn > g.agents[j].attn })
@@ -3468,6 +3526,9 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.paneZoomAt(mo.X, mo.Y) {
 			return m.toggleZoom()
+		}
+		if mm, cmd, ok := m.stripClick(mo.X, mo.Y); ok {
+			return mm, cmd
 		}
 		if m.screen == screenPicker && !m.helpOpen && !m.paletteOpen && !m.diffOpen && !m.stackOpen {
 			if mm, cmd, ok := m.deckClick(mo.X, mo.Y); ok {

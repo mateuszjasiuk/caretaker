@@ -61,6 +61,9 @@ const (
 type Display struct {
 	// Icons selects persistent navigation and pane symbols: nerd, text, or ascii.
 	Icons string `toml:"icons"`
+	// AgentStrip lists every open worktree after the bar icons, coloured by
+	// its agents' status. On by default.
+	AgentStrip bool `toml:"agent_strip"`
 }
 
 // Stack configures stacked-PR workflow behavior.
@@ -248,7 +251,7 @@ func Default() Config {
 			Usage: "alt+u", CommandPalette: "alt+p",
 		},
 		Usage:   Usage{Threshold: 50},
-		Display: Display{Icons: IconsNerd},
+		Display: Display{Icons: IconsNerd, AgentStrip: true},
 		Plasma: Plasma{
 			Pattern: "classic", Palette: "aurora", Charset: "dots",
 			Speed: 0.3, Width: 40,

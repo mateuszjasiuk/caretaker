@@ -228,6 +228,9 @@ func (c *Controller) PlasmaConfig() config.Plasma { return c.cfg.Plasma }
 // confirmation panel. The configuration default is deliberately false.
 func (c *Controller) StackAutoMerge() bool { return c.cfg.Stack.AutoMerge }
 
+// AgentStrip reports whether the bar lists open worktrees after its icons.
+func (c *Controller) AgentStrip() bool { return c.cfg.Display.AgentStrip }
+
 // DisplayIcons returns the configured persistent icon vocabulary.
 func (c *Controller) DisplayIcons() string {
 	if c.cfg.Display.Icons == "" {

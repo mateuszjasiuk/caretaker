@@ -233,6 +233,8 @@ func (m Model) renderBar() string {
 	// Right side: notification zone (! N  ✓ N) then the workspace context. Its
 	// layout (and the click targets within it) is derived once by barRightZones.
 	right := m.barRightZones().text
+	strip, _ := m.agentStripLayout()
+	left += strip
 
 	gap := max(1, m.width-lipgloss.Width(left)-lipgloss.Width(right))
 	bar := ansi.Truncate(left+strings.Repeat(" ", gap)+right, m.width, "")
@@ -2288,4 +2290,146 @@ func windowBounds(n, cursor, height int) (int, int) {
 		start = n - height
 	}
 	return start, start + height
+}
+
+// --- agent strip ---
+
+// stripItem is one worktree in the bar's agent strip, with its column span.
+type stripItem struct {
+	group      agentGroup
+	start, end int // absolute bar columns, end exclusive
+}
+
+// stripSep sits between the bar icons and the agent strip.
+var stripSep = "   " + barSep.Render("│") + "  "
+
+// agentStripLayout lays the agent strip out in the bar's first row, between the
+// icons and the right-side facts: each open worktree's name, coloured by its
+// agents (yellow working, green ✓ done, red ! waiting, dim idle), with the
+// current worktree underlined. Names shorten before items are dropped, and
+// dropped items show as "+N". Returns "" when the strip is off or doesn't fit.
+func (m Model) agentStripLayout() (string, []stripItem) {
+	if !m.agentStrip {
+		return "", nil
+	}
+	groups := m.stripGroups()
+	if len(groups) == 0 {
+		return "", nil
+	}
+	leftW := lipgloss.Width(m.renderBarLeft())
+	avail := m.width - leftW - lipgloss.Width(m.barRightZones().text) - 1 - lipgloss.Width(stripSep)
+	if avail < 8 {
+		return "", nil
+	}
+
+	// A worktree name shared by two repos needs its repo to tell them apart.
+	count := map[string]int{}
+	for _, g := range groups {
+		count[g.worktree]++
+	}
+	label := func(g agentGroup) string {
+		switch {
+		case g.key == m.homeWSKey:
+			return "~"
+		case count[g.worktree] > 1:
+			return g.repo + "/" + g.worktree
+		}
+		return g.worktree
+	}
+	item := func(g agentGroup, maxW int) string {
+		name := truncateTo(label(g), maxW)
+		st := dimStyle
+		switch {
+		case g.attn == attnWaiting:
+			name, st = "! "+name, boldRed
+		case g.attn == attnDone:
+			name, st = "✓ "+name, boldGreen
+		case g.busy:
+			st = dirtyStyle
+		}
+		if m.current != nil && g.key == m.current.key {
+			st = st.Underline(true)
+		}
+		return st.Render(name)
+	}
+	sep := dimStyle.Render(" · ")
+	sepW := lipgloss.Width(sep)
+
+	// Build the strip from the first n items, with "+N" for the rest.
+	build := func(texts []string, n int) (string, []stripItem) {
+		col := leftW + lipgloss.Width(stripSep)
+		var b strings.Builder
+		var items []stripItem
+		for i := range n {
+			if i > 0 {
+				b.WriteString(sep)
+				col += sepW
+			}
+			w := lipgloss.Width(texts[i])
+			b.WriteString(texts[i])
+			items = append(items, stripItem{group: groups[i], start: col, end: col + w})
+			col += w
+		}
+		if rest := len(texts) - n; rest > 0 {
+			b.WriteString(dimStyle.Render(" +" + strconv.Itoa(rest)))
+		}
+		return stripSep + b.String(), items
+	}
+
+	// Try full names, then shorter ones; then drop items from the end.
+	var texts []string
+	for _, maxW := range []int{32, 16, 10} {
+		texts = texts[:0]
+		width := 0
+		for i, g := range groups {
+			texts = append(texts, item(g, maxW))
+			if i > 0 {
+				width += sepW
+			}
+			width += lipgloss.Width(texts[i])
+		}
+		if width <= avail {
+			return build(texts, len(texts))
+		}
+	}
+	for n := len(texts) - 1; n >= 1; n-- {
+		width := lipgloss.Width(" +" + strconv.Itoa(len(texts)-n))
+		for i := range n {
+			if i > 0 {
+				width += sepW
+			}
+			width += lipgloss.Width(texts[i])
+		}
+		if width <= avail {
+			return build(texts, n)
+		}
+	}
+	return "", nil
+}
+
+// stripClick handles a left click on the agent strip. A worktree with an agent
+// that needs attention opens that agent; any other opens the worktree.
+func (m Model) stripClick(x, y int) (tea.Model, tea.Cmd, bool) {
+	if y != 0 {
+		return m, nil, false
+	}
+	_, items := m.agentStripLayout()
+	for _, it := range items {
+		if x < it.start || x >= it.end {
+			continue
+		}
+		g := it.group
+		for _, a := range g.agents {
+			if a.attn != attnNone && a.attn == g.attn {
+				mm, cmd := m.focusBoardAgent(a)
+				return mm, cmd, true
+			}
+		}
+		if m.current != nil && m.current.key == g.key {
+			return m, nil, true
+		}
+		mm, cmd := m.activate(g.repo, g.worktree, g.path)
+		return mm, cmd, true
+	}
+	return m, nil, false
 }

@@ -5,8 +5,10 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
@@ -151,6 +153,15 @@ func StartSpec(spec Spec, dir string, w, h int, dirty func(*Session)) (*Session,
 		}
 		spec.Argv = []string{shell}
 	}
+	// A missing dir makes the pty start fail as "fork/exec <program>: no such
+	// file or directory", which blames the program. Check it first so the error
+	// names the folder (e.g. a worktree whose repo was moved).
+	if err := checkDir(dir); err != nil {
+		if spec.Companion != nil {
+			_ = spec.Companion.Close()
+		}
+		return nil, err
+	}
 
 	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...)
 	cmd.Dir = dir
@@ -187,6 +198,25 @@ func StartSpec(spec Spec, dir string, w, h int, dirty func(*Session)) (*Session,
 	go io.Copy(f, s.emu) //nolint:errcheck // emulator(SendKey) → pty (input)
 
 	return s, nil
+}
+
+// checkDir reports a clear error when dir, the folder a session starts in, is
+// missing or not a directory. An empty dir means ct's own working directory.
+func checkDir(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	info, err := os.Stat(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("workspace folder %s does not exist", dir)
+	}
+	if err != nil {
+		return fmt.Errorf("workspace folder: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("workspace folder %s is not a directory", dir)
+	}
+	return nil
 }
 
 // buildEnv returns the current process environment with caretaker's terminal

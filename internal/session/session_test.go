@@ -675,6 +675,23 @@ func waitForCloserCall(t *testing.T, closer *testCloser) int32 {
 	}
 }
 
+func TestStartSpecNamesMissingDir(t *testing.T) {
+	companion := newTestCloser(nil)
+	missing := filepath.Join(t.TempDir(), "moved-worktree")
+	_, err := StartSpec(Spec{
+		Kind:      Agent,
+		Argv:      []string{"sh", "-c", "true"},
+		Companion: companion,
+	}, missing, 80, 24, func(*Session) {})
+	want := "workspace folder " + missing + " does not exist"
+	if err == nil || err.Error() != want {
+		t.Fatalf("StartSpec error = %v, want %q", err, want)
+	}
+	if got := companion.count.Load(); got != 1 {
+		t.Fatalf("companion Close calls = %d, want 1 after a missing dir", got)
+	}
+}
+
 func TestStartRejectsAgentWithoutCommand(t *testing.T) {
 	if _, err := Start(Agent, "agent", t.TempDir(), nil, 80, 24, func(*Session) {}); !errors.Is(err, errEmptyAgentArgv) {
 		t.Fatalf("Start empty agent error = %v, want %v", err, errEmptyAgentArgv)

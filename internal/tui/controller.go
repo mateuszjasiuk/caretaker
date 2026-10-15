@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,10 +29,10 @@ type Controller struct {
 	// deciding whether a persisted agent can be resumed. Empty means the default
 	// ~/.claude/projects; tests point it at a temp dir.
 	projectsDir string
-	// homeTrusted records that EnsureHomeDirTrusted has already verified (or
-	// set) the trust flag, so subsequent agent launches skip re-reading
-	// ~/.claude.json. Only touched from the UI goroutine.
-	homeTrusted bool
+	// trusted records the directories EnsureDirTrusted has already verified
+	// (or set) the trust flag for, so subsequent agent launches skip
+	// re-reading ~/.claude.json. Only touched from the UI goroutine.
+	trusted map[string]bool
 	// loadSeq stamps each issued Load so the loadedMsg handler can drop
 	// results superseded by a newer in-flight load.
 	loadSeq atomic.Uint64
@@ -249,19 +252,248 @@ func (c *Controller) GlobalConfigDir() (string, error) { return os.UserHomeDir()
 // every spawn: it only rewrites the file when the flag isn't already true, and
 // preserves every other field byte-for-byte.
 func (c *Controller) EnsureHomeDirTrusted() error {
-	if c.homeTrusted {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	return c.EnsureDirTrusted(home)
+}
+
+// EnsureDirTrusted marks dir as trusted in Claude's config so a session started
+// there skips the trust prompt. Repo worktrees are trusted on their own
+// (claude remembers them per project); this is for the synthetic workspaces
+// ct starts in directories the user may never have opened claude in.
+func (c *Controller) EnsureDirTrusted(dir string) error {
+	if c.trusted[dir] {
 		return nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
-	if err := ensureProjectTrusted(filepath.Join(home, ".claude.json"), home); err != nil {
+	if err := ensureProjectTrusted(filepath.Join(home, ".claude.json"), dir); err != nil {
 		return err
 	}
-	c.homeTrusted = true
+	if c.trusted == nil {
+		c.trusted = map[string]bool{}
+	}
+	c.trusted[dir] = true
 	return nil
 }
+
+// OrchestratorDir is where the orchestrator session runs: the configured
+// directory, or "orchestrator" next to the config file. It is the
+// orchestrator's own place for notes, outside every repo.
+func (c *Controller) OrchestratorDir() (string, error) {
+	d := c.cfg.Orchestrator.Dir
+	if d == "" {
+		cfgPath, err := config.Path()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(filepath.Dir(cfgPath), "orchestrator"), nil
+	}
+	if strings.HasPrefix(d, "~/") || d == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		d = filepath.Join(home, strings.TrimPrefix(d, "~"))
+	}
+	return d, nil
+}
+
+// EnsureOrchestratorDir creates the orchestrator directory when it is missing.
+// In the default location it also seeds CLAUDE.md and tasks.md, the files the
+// orchestrator keeps its plan in. Files that exist are left alone, and a
+// configured directory gets no files at all: it may be the user's own.
+func (c *Controller) EnsureOrchestratorDir() (string, error) {
+	dir, err := c.OrchestratorDir()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	if c.cfg.Orchestrator.Dir != "" {
+		return dir, nil
+	}
+	for name, body := range orchestratorFiles {
+		p := filepath.Join(dir, name)
+		if _, err := os.Stat(p); err == nil {
+			continue
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			return "", err
+		}
+	}
+	return dir, nil
+}
+
+// OrchestratorNotify reports whether worktree status changes are queued to the
+// orchestrator as messages.
+func (c *Controller) OrchestratorNotify() bool { return c.cfg.Orchestrator.Notify }
+
+// OrchestratorAgentSpec builds the Claude session for the orchestrator
+// workspace: a normal ct-managed session (fresh under id, or resumed when its
+// transcript exists) with the orchestrator instructions appended to its
+// system prompt. The instructions name this ct binary and socket so the
+// agent reaches the ct that started it.
+func (c *Controller) OrchestratorAgentSpec(id, label string) (session.Spec, error) {
+	providerCfg, err := c.providerConfig(agent.Claude)
+	if err != nil {
+		return session.Spec{}, err
+	}
+	if id == "" {
+		id = newSessionID()
+	}
+	var spec session.Spec
+	if c.transcriptExists(id) {
+		spec = c.resumeClaudeAgentSpec(providerCfg, id, label, "")
+	} else {
+		spec = c.freshClaudeAgentSpec(providerCfg, id, label, "")
+	}
+	spec.Argv = append(spec.Argv, "--append-system-prompt", orchestratorSystemPrompt(ctCommand()))
+	return spec, nil
+}
+
+// ctCommand is how the orchestrator should invoke this ct: plain "ct" when
+// the one on PATH is this binary (so the user's Bash permission for `ct ctl`
+// carries over), otherwise this binary's full path (a `go run` build, or an
+// install outside PATH).
+func ctCommand() string {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		return "ct"
+	}
+	if onPath, err := exec.LookPath("ct"); err == nil {
+		a, errA := os.Stat(onPath)
+		b, errB := os.Stat(exe)
+		if errA == nil && errB == nil && os.SameFile(a, b) {
+			return "ct"
+		}
+	}
+	return exe
+}
+
+// LastAssistantMessage returns the text of the last assistant turn in the
+// transcript claude keeps for session id, started in cwd. Tool calls without
+// prose are skipped, so this is the agent's last words to the user. It is
+// empty, not an error, when the transcript has no prose yet.
+func (c *Controller) LastAssistantMessage(cwd, id string) (string, error) {
+	path, ok := c.transcriptPath(cwd, id)
+	if !ok {
+		return "", fmt.Errorf("no transcript for session %s", id)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	return lastAssistantText(f), nil
+}
+
+// transcriptPath locates id.jsonl: first under the project directory claude
+// derives from cwd, then by scanning every project (the derivation is
+// claude's, and may change).
+func (c *Controller) transcriptPath(cwd, id string) (string, bool) {
+	if id == "" {
+		return "", false
+	}
+	dir := c.projectsDir
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", false
+		}
+		dir = filepath.Join(home, ".claude", "projects")
+	}
+	name := id + ".jsonl"
+	if cwd != "" {
+		p := filepath.Join(dir, claudeProjectName(cwd), name)
+		if _, err := os.Stat(p); err == nil {
+			return p, true
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		p := filepath.Join(dir, e.Name(), name)
+		if _, err := os.Stat(p); err == nil {
+			return p, true
+		}
+	}
+	return "", false
+}
+
+// claudeProjectName mirrors how claude names a project directory after its
+// working directory: every character outside [A-Za-z0-9] becomes "-".
+func claudeProjectName(cwd string) string {
+	var b strings.Builder
+	for _, r := range cwd {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	return b.String()
+}
+
+// lastAssistantText scans a transcript and returns the prose of the last
+// assistant entry that has any. Long replies are cut to lastMessageMax runes.
+func lastAssistantText(r io.Reader) string {
+	type block struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	type entry struct {
+		Type    string `json:"type"`
+		Message struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
+	last := ""
+	for sc.Scan() {
+		line := sc.Bytes()
+		if !bytes.Contains(line, []byte(`"assistant"`)) {
+			continue
+		}
+		var e entry
+		if json.Unmarshal(line, &e) != nil || e.Type != "assistant" {
+			continue
+		}
+		var blocks []block
+		if json.Unmarshal(e.Message.Content, &blocks) != nil {
+			continue
+		}
+		var parts []string
+		for _, b := range blocks {
+			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+				parts = append(parts, strings.TrimSpace(b.Text))
+			}
+		}
+		if len(parts) > 0 {
+			last = strings.Join(parts, "\n")
+		}
+	}
+	if runes := []rune(last); len(runes) > lastMessageMax {
+		last = string(runes[:lastMessageMax]) + " …"
+	}
+	return last
+}
+
+// lastMessageMax caps the prose a summary carries, so an orchestrator reading
+// many worktrees doesn't fill its context with one agent's essay.
+const lastMessageMax = 2000
 
 // ensureProjectTrusted sets projects[projectPath].hasTrustDialogAccepted to
 // true inside the Claude config at configPath. It round-trips unrelated

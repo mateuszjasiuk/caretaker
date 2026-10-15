@@ -125,3 +125,23 @@ func TestLoadMissingFileIsEmpty(t *testing.T) {
 		t.Fatalf("expected empty state, got %v", s.LastOpened)
 	}
 }
+
+func TestDrainAndFilterQueue(t *testing.T) {
+	s := &State{Queues: map[string][]string{}}
+	s.Enqueue("k", "one")
+	s.Enqueue("k", "two")
+	s.Enqueue("k", "three")
+	s.FilterQueue("k", func(text string) bool { return text != "two" })
+	got := s.Drain("k")
+	if len(got) != 2 || got[0] != "one" || got[1] != "three" {
+		t.Fatalf("drained %q, want [one three]", got)
+	}
+	if _, ok := s.Queues["k"]; ok {
+		t.Fatal("drain should remove the key")
+	}
+	s.Enqueue("k", "only")
+	s.FilterQueue("k", func(string) bool { return false })
+	if _, ok := s.Queues["k"]; ok {
+		t.Fatal("filtering everything should remove the key")
+	}
+}

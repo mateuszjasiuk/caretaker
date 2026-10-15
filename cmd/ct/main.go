@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/KCaverly/caretaker/internal/config"
+	"github.com/KCaverly/caretaker/internal/ctl"
 	"github.com/KCaverly/caretaker/internal/repo"
 	"github.com/KCaverly/caretaker/internal/session"
 	"github.com/KCaverly/caretaker/internal/stack"
@@ -40,6 +41,11 @@ func main() {
 	// stdout and exits, so it must not touch the Bubble Tea program or config.
 	if len(os.Args) > 1 && os.Args[1] == "stack" {
 		os.Exit(runStack(os.Args[2:]))
+	}
+	// `ct ctl` is the client side of the control socket: it talks to a running
+	// ct and never starts one.
+	if len(os.Args) > 1 && os.Args[1] == "ctl" {
+		os.Exit(runCtl(os.Args[2:]))
 	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "ct:", err)
@@ -864,8 +870,19 @@ func run() error {
 	mgr := session.NewManager()
 	defer mgr.CloseAll() // reap all ptys on exit
 
+	// The control socket must exist before any session starts: hosted programs
+	// find it through CT_SOCKET, which they inherit from ct's own environment.
+	srv, err := ctl.Listen()
+	if err != nil {
+		return fmt.Errorf("control socket: %w", err)
+	}
+	defer srv.Close()
+	if err := os.Setenv(ctl.SocketEnv, srv.Path()); err != nil {
+		return err
+	}
+
 	ctrl := tui.NewController(cfg)
-	m := tui.New(ctrl, mgr)
+	m := tui.New(ctrl, mgr).WithCtl(srv)
 	if needsSetup {
 		m = m.EnterSetup(configPath)
 	}

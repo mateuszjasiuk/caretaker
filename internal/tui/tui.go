@@ -23,6 +23,7 @@ import (
 
 	"github.com/KCaverly/caretaker/internal/agent"
 	"github.com/KCaverly/caretaker/internal/config"
+	"github.com/KCaverly/caretaker/internal/ctl"
 	"github.com/KCaverly/caretaker/internal/diffpager"
 	"github.com/KCaverly/caretaker/internal/plasma"
 	"github.com/KCaverly/caretaker/internal/repo"
@@ -45,6 +46,10 @@ const (
 	screenAgent
 	screenTerminal
 	screenSetup
+	// screenOrchestrator shows the orchestrator's session. It is a tab of its
+	// own beside the workspace views, not a workspace: the current worktree
+	// stays current underneath, and the cycle keys lead back to it.
+	screenOrchestrator
 )
 
 // next cycles among the session views (editor → agent → terminal → editor).
@@ -426,6 +431,21 @@ type Model struct {
 	// home workspace path/key, cached on first open for pathToKey lookups
 	homeWSPath string
 	homeWSKey  string
+	// orchestrator workspace path/key, set on first open like the home ones
+	orchWSPath string
+	orchWSKey  string
+	// orchFrom is the view the orchestrator tab was opened from, so pressing
+	// its key again returns there.
+	orchFrom screen
+
+	// ctlSrv is the control socket `ct ctl` talks to; nil in tests. queueSent
+	// records when each workspace last had a queued message delivered, so the
+	// queue waits for that turn to start before sending the next (see
+	// deliverQueued). ctlRemoveKey parks a remove request from the socket
+	// until the deck can show the confirm panel for it.
+	ctlSrv       *ctl.Server
+	queueSent    map[string]time.Time
+	ctlRemoveKey string
 
 	// new-agent form (sub-state of the agent board)
 	formOpen     bool
@@ -812,7 +832,7 @@ func (m Model) Init() tea.Cmd {
 	if m.screen == screenSetup {
 		return tea.Batch(textinput.Blink, m.repaintCmd())
 	}
-	cmds := []tea.Cmd{m.loadCmd(), textinput.Blink, m.repaintCmd()}
+	cmds := []tea.Cmd{m.loadCmd(), textinput.Blink, m.repaintCmd(), m.watchCtl()}
 	if m.claudeEnabled() {
 		cmds = append(cmds, m.pollStatusCmd())
 	}
@@ -1065,6 +1085,9 @@ func (m Model) scrollTermPaneWheel(s *session.Session, up bool) bool {
 }
 
 func (m Model) activeSession() *session.Session {
+	if m.screen == screenOrchestrator {
+		return m.orchestratorSession()
+	}
 	if m.current == nil || m.current.ws == nil {
 		return nil
 	}
@@ -1078,6 +1101,15 @@ func (m Model) activeSession() *session.Session {
 	default:
 		return nil
 	}
+}
+
+// orchestratorSession is the orchestrator's agent, or nil before its first
+// use.
+func (m Model) orchestratorSession() *session.Session {
+	if ws, ok := m.mgr.Workspace(orchestratorKey); ok {
+		return ws.ActiveAgentSession()
+	}
+	return nil
 }
 
 // Update implements tea.Model. After every message it re-declares which
@@ -1134,6 +1166,12 @@ func (m Model) visibleSessions() []*session.Session {
 	if m.helpOpen || m.boardOpen || m.usageOpen || m.paletteOpen || m.diffOpen || m.stackOpen || m.screen == screenPicker || m.screen == screenSetup {
 		return nil
 	}
+	if m.screen == screenOrchestrator {
+		if s := m.orchestratorSession(); s != nil {
+			return []*session.Session{s}
+		}
+		return nil
+	}
 	if m.current == nil || m.current.ws == nil {
 		return nil
 	}
@@ -1175,6 +1213,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			w, h := m.sessionSize()
 			m.mgr.ResizeWorkspace(m.current.key, w, h)
 		}
+		if m.screen == screenOrchestrator {
+			w, h := m.sessionSize()
+			m.mgr.ResizeWorkspace(orchestratorKey, w, h)
+		}
 		return m, nil
 
 	case loadedMsg:
@@ -1190,6 +1232,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.recomputeMatches()
 		m.recomputeActive()
 		m.computeRecentRanks()
+		m = m.showCtlRemove() // a parked `ct ctl remove`, once the deck is idle
 		// Refresh the deck's stack cache for the active worktrees, respecting the
 		// freshness window (the deck's `r` re-kicks with force).
 		return m, tea.Batch(m.kickStackFetches(false)...)
@@ -1203,6 +1246,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.creatingTicking = true
 		return m, scheduleCreatingTick()
+
+	case ctlRequestMsg:
+		return m.handleCtl(msg.p)
+
+	case ctlSpawnedMsg:
+		return m.handleCtlSpawned(msg)
+
+	case ctlEnterMsg:
+		return m.handleCtlEnter(msg)
 
 	case createdMsg:
 		m.endCreating(msg.repo, msg.name)
@@ -1396,6 +1448,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.applyProviderTransition(pid, key, previous.Status, status)
 			m.agentStatus[pid] = status
 			m.agentPrevStatus[pid] = status.Status
+			cmds = append(cmds, m.deliverQueued())
 		}
 		return m, tea.Batch(cmds...)
 
@@ -1465,6 +1518,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				prev := m.agentPrevStatus[pid]
 				if prev != "busy" || (st.Status != "idle" && st.Status != "waiting") {
 					continue
+				}
+				if key, ok := m.pathToKey(st.Cwd); ok {
+					m.noteToOrchestrator(key, m.agentLabel(key, pid), st)
 				}
 				// Skip the bell/marker if the user is already watching this agent.
 				if m.watchingAgent(pid) {
@@ -1539,7 +1595,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.agentStatus = nextStatus
 		}
-		return m, tea.Batch(m.scheduleStatusTick(), flashTick)
+		// Fresh statuses may have freed an agent for its next queued message.
+		// deliverQueued pops the queue, so it runs before m is returned.
+		deliver := m.deliverQueued()
+		return m, tea.Batch(m.scheduleStatusTick(), flashTick, deliver)
 
 	case usageTickMsg:
 		if !m.usageEnabled() {
@@ -1707,8 +1766,13 @@ func (m Model) clearWorkspaceAttention() {
 	if m.current == nil {
 		return
 	}
+	m.clearAttentionFor(m.current.key)
+}
+
+// clearAttentionFor drops the unread markers of every agent in workspace key.
+func (m Model) clearAttentionFor(key string) {
 	for pid, e := range m.attention {
-		if e.key == m.current.key {
+		if e.key == key {
 			delete(m.attention, pid)
 		}
 	}
@@ -1760,7 +1824,11 @@ func (m *Model) applyProviderTransition(pid int, key, previous string, status Ag
 	} else {
 		delete(m.busySince, pid)
 	}
-	if previous != "busy" || (status.Status != "idle" && status.Status != "waiting") || m.watchingAgent(pid) {
+	if previous != "busy" || (status.Status != "idle" && status.Status != "waiting") {
+		return
+	}
+	m.noteToOrchestrator(key, m.agentLabel(key, pid), status)
+	if m.watchingAgent(pid) {
 		return
 	}
 	if status.Status == "idle" {
@@ -1902,9 +1970,13 @@ func (m Model) buildBoard() (rows []boardRow, nav []int) {
 		addGroup(wsKey(it.repo.Name, it.view.WT.Name), it.repo.Name, it.view.WT.Name, it.view.WT.Path)
 	}
 
-	// The home workspace isn't a git worktree, so it never appears in m.active.
+	// The home and orchestrator workspaces aren't git worktrees, so they never
+	// appear in m.active.
 	if m.homeWSKey != "" {
 		addGroup(m.homeWSKey, "~", "config", m.homeWSPath)
+	}
+	if m.orchWSKey != "" {
+		addGroup(m.orchWSKey, "~", "orchestrator", m.orchWSPath)
 	}
 
 	isCurrent := func(key string) bool { return m.current != nil && m.current.key == key }
@@ -2105,9 +2177,13 @@ func (m Model) restartBoardAgent(r boardRow) (tea.Model, tea.Cmd) {
 		spec session.Spec
 		err  error
 	)
-	if old.SessionID == "" {
+	switch {
+	case r.key == orchestratorKey && provider == agent.Claude:
+		// Keep the orchestrator instructions across a restart.
+		spec, err = m.ctrl.OrchestratorAgentSpec(old.SessionID, old.Title)
+	case old.SessionID == "":
 		spec, err = m.ctrl.NewProviderAgentSpec(provider, old.Title, "")
-	} else {
+	default:
 		spec, err = m.ctrl.RestoreProviderAgentSpec(provider, old.SessionID, old.Title, "")
 	}
 	if err != nil {
@@ -2133,6 +2209,10 @@ func (m Model) restartBoardAgent(r boardRow) (tea.Model, tea.Cmd) {
 // agent's workspace (when it isn't already current), switches to the agent
 // screen, focuses the agent, and clears the workspace's unread markers.
 func (m Model) focusBoardAgent(r boardRow) (tea.Model, tea.Cmd) {
+	if r.key == orchestratorKey {
+		m.boardOpen = false
+		return m.showOrchestrator()
+	}
 	if m.current != nil && m.current.key == r.key {
 		m.boardOpen = false
 		m.screen = screenAgent
@@ -2430,6 +2510,8 @@ func (m Model) paletteCommands() []paletteCmd {
 		)
 	}
 	cmds = append(cmds, paletteCmd{title: "open home workspace", hint: m.keys.GlobalConfig, run: func(m Model) (tea.Model, tea.Cmd) { return m.activateGlobalConfig() }})
+	cmds = append(cmds, paletteCmd{title: "orchestrator", hint: m.keys.Orchestrator, run: func(m Model) (tea.Model, tea.Cmd) { return m.toggleOrchestrator() }})
+	cmds = append(cmds, paletteCmd{title: "new orchestrator session", run: func(m Model) (tea.Model, tea.Cmd) { return m.resetOrchestrator() }})
 
 	// 5. Terminal panes — each switches to the terminal screen first, so the
 	// palette can split/zoom/close from any screen (strictly more capable than
@@ -2827,7 +2909,7 @@ func (m Model) activateWithoutHistory(repoName, wtName, dir string) (tea.Model, 
 	if saved := m.savedActiveAgent(key); saved < len(ws.Agents) {
 		ws.ActiveAgent = saved
 	}
-	if m.current != nil && m.screen != screenPicker {
+	if m.current != nil && m.screen != screenPicker && m.screen != screenOrchestrator {
 		if m.lastScreens == nil {
 			m.lastScreens = map[string]screen{}
 		}
@@ -2862,6 +2944,9 @@ func (m Model) activateWithoutHistory(repoName, wtName, dir string) (tea.Model, 
 // Launching into an unopened home workspace passes false so the explicitly
 // selected agent is the only one created.
 func (m Model) workspaceSpecs(key string, addDefault bool) ([]session.Spec, error) {
+	if key == orchestratorKey {
+		return m.orchestratorSpecs()
+	}
 	specs := []session.Spec{m.ctrl.EditorSpec()}
 	var saved []state.AgentState
 	if m.state != nil {
@@ -3080,6 +3165,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == m.keys.GlobalConfig {
 		return m.activateGlobalConfig()
 	}
+	if msg.String() == m.keys.Orchestrator {
+		return m.toggleOrchestrator()
+	}
 	// Direct-jump keys work from session screens and from the picker whenever a
 	// workspace is active; they no-op with none.
 	switch msg.String() {
@@ -3200,7 +3288,7 @@ func restoredSessionIndex(sessions []*session.Session, target *session.Session, 
 func (m Model) isReservedActionKey(s string) bool {
 	switch s {
 	case m.keys.Cycle, m.keys.CycleBack, m.keys.Picker, m.keys.Palette,
-		m.keys.Attention, m.keys.GlobalConfig, m.keys.NextAgent, m.keys.PrevAgent,
+		m.keys.Attention, m.keys.GlobalConfig, m.keys.Orchestrator, m.keys.NextAgent, m.keys.PrevAgent,
 		m.keys.CommandPalette, m.keys.GotoEditor, m.keys.GotoAgent, m.keys.GotoTerm:
 		return true
 	}
@@ -3260,15 +3348,16 @@ func (m Model) handleSessionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
-	case m.keys.Cycle:
-		m.screen = m.screen.next()
-		if m.screen == screenAgent && m.current != nil {
-			m.clearWorkspaceAttention()
+	case m.keys.Cycle, m.keys.CycleBack:
+		if m.current == nil {
+			return m, nil // on the orchestrator tab with no workspace to cycle into
 		}
-		return m, nil
-	case m.keys.CycleBack:
-		m.screen = m.screen.prev()
-		if m.screen == screenAgent && m.current != nil {
+		if msg.String() == m.keys.Cycle {
+			m.screen = m.screen.next()
+		} else {
+			m.screen = m.screen.prev()
+		}
+		if m.screen == screenAgent {
 			m.clearWorkspaceAttention()
 		}
 		return m, nil
@@ -3332,7 +3421,7 @@ func (m Model) handleSessionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // this is the moment they're re-read. Shared by handleSessionKey's picker branch
 // and the command palette's "back to deck" row.
 func (m Model) returnToDeck() (tea.Model, tea.Cmd) {
-	if m.current != nil {
+	if m.current != nil && m.screen != screenOrchestrator {
 		if m.lastScreens == nil {
 			m.lastScreens = map[string]screen{}
 		}
@@ -3342,6 +3431,7 @@ func (m Model) returnToDeck() (tea.Model, tea.Cmd) {
 	if len(m.active) > 0 {
 		m.focus = focusActive
 	}
+	m = m.showCtlRemove()
 	return m, m.loadCmd()
 }
 
@@ -3666,6 +3756,9 @@ func (m Model) deckClick(x, y int) (tea.Model, tea.Cmd, bool) {
 // session tabs only switch when a workspace is active. Switching to the
 // picker refreshes the deck, matching the picker key.
 func (m Model) selectTab(s screen) (tea.Model, tea.Cmd) {
+	if s == screenOrchestrator {
+		return m.showOrchestrator()
+	}
 	if s == screenPicker || m.current != nil {
 		wasSession := m.screen != screenPicker
 		m.screen = s
@@ -4956,6 +5049,9 @@ func (m Model) pathToKey(path string) (string, bool) {
 	if m.homeWSPath != "" && filepath.Clean(m.homeWSPath) == path {
 		return m.homeWSKey, true
 	}
+	if m.orchWSPath != "" && filepath.Clean(m.orchWSPath) == path {
+		return m.orchWSKey, true
+	}
 	return "", false
 }
 
@@ -4985,7 +5081,12 @@ func (m Model) agentLocation(target *session.Session) (key, path string, ok bool
 		}
 	}
 	if m.homeWSKey != "" {
-		return match(m.homeWSKey, m.homeWSPath)
+		if key, path, ok := match(m.homeWSKey, m.homeWSPath); ok {
+			return key, path, true
+		}
+	}
+	if m.orchWSKey != "" {
+		return match(m.orchWSKey, m.orchWSPath)
 	}
 	return "", "", false
 }

@@ -49,6 +49,24 @@ type Config struct {
 	// Diff configures the diff viewer's git invocations and optional external
 	// formatter.
 	Diff Diff `toml:"diff"`
+	// Orchestrator configures the agent that manages work across worktrees.
+	Orchestrator Orchestrator `toml:"orchestrator"`
+}
+
+// Orchestrator configures the orchestrator workspace: one Claude session that
+// sees every worktree through `ct ctl` and can start, message, and stop the
+// agents working in them.
+type Orchestrator struct {
+	// Dir is the directory the orchestrator session runs in and keeps its
+	// notes (tasks.md). Empty means "orchestrator" next to the config file,
+	// which ct creates and seeds with a CLAUDE.md. A configured directory is
+	// created but left empty: it may be the user's own.
+	Dir string `toml:"dir"`
+	// Notify queues a short note to the orchestrator whenever a worktree agent
+	// finishes a turn or stops to ask for input, so it can follow progress
+	// without polling. The note is delivered as a message when the
+	// orchestrator is idle.
+	Notify bool `toml:"notify"`
 }
 
 const (
@@ -185,6 +203,9 @@ type Keys struct {
 	Help string `toml:"help"`
 	// GlobalConfig opens the home-directory workspace for editing global config.
 	GlobalConfig string `toml:"global_config"`
+	// Orchestrator opens the orchestrator workspace: the agent that manages
+	// work across every open worktree.
+	Orchestrator string `toml:"orchestrator"`
 	// Attention jumps straight into the session of the agent that most needs the
 	// user — live-waiting agents first, then unread completions — and cycles to
 	// the next such agent on each press, collapsing the open-board/scan/select
@@ -240,7 +261,7 @@ func Default() Config {
 			GotoEditor: "alt+1", GotoAgent: "alt+2", GotoTerm: "alt+3",
 			Picker:  "ctrl+g",
 			Palette: "alt+a", NextAgent: "f4", PrevAgent: "f3",
-			Help: "f1", GlobalConfig: "alt+g", Attention: "alt+n", Back: "alt+b",
+			Help: "f1", GlobalConfig: "alt+g", Orchestrator: "alt+o", Attention: "alt+n", Back: "alt+b",
 			TermSplitV: "alt+v", TermSplitH: "alt+s",
 			TermZoom: "alt+z", TermClose: "alt+x",
 			TermFocusLeft: "alt+h", TermFocusDown: "alt+j",
@@ -250,8 +271,9 @@ func Default() Config {
 			TermScrollUp: "shift+pgup", TermScrollDown: "shift+pgdown",
 			Usage: "alt+u", CommandPalette: "alt+p",
 		},
-		Usage:   Usage{Threshold: 50},
-		Display: Display{Icons: IconsNerd, AgentStrip: true},
+		Usage:        Usage{Threshold: 50},
+		Display:      Display{Icons: IconsNerd, AgentStrip: true},
+		Orchestrator: Orchestrator{Notify: true},
 		Plasma: Plasma{
 			Pattern: "classic", Palette: "aurora", Charset: "dots",
 			Speed: 0.3, Width: 40,

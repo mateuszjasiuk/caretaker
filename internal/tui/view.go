@@ -165,6 +165,8 @@ func (m Model) destinationGlyph(s screen) string {
 			return "edit"
 		case screenAgent:
 			return "agent"
+		case screenOrchestrator:
+			return "orch"
 		default:
 			return "term"
 		}
@@ -177,6 +179,8 @@ func (m Model) destinationGlyph(s screen) string {
 			return "E"
 		case screenAgent:
 			return "A"
+		case screenOrchestrator:
+			return "O"
 		default:
 			return "T"
 		}
@@ -188,6 +192,8 @@ func (m Model) destinationGlyph(s screen) string {
 		return iconEditor
 	case screenAgent:
 		return iconAgent
+	case screenOrchestrator:
+		return iconOrch
 	default:
 		return iconTerm
 	}
@@ -211,6 +217,7 @@ const (
 	iconAgent  = "󰚩"          // md-robot (U+F06A9)   — claude
 	iconTerm   = ""          // fa-terminal (U+F120) — term
 	iconPanes  = "\U0000F009" // fa-th-large (U+F009) — the split-pane grid
+	iconOrch   = "\U0000F0E8" // fa-sitemap (U+F0E8)  — the orchestrator
 	// Zoom toggle shown at the tail of the pane indicator (clickable): diagonal
 	// arrows expanding out to maximize the active pane, collapsing in to restore
 	// the split. Material Design Icons range — the classic Font Awesome
@@ -285,6 +292,13 @@ func (m Model) renderNotifZone() string {
 // whether a pane is zoomed — and thereby advertises the prev/next-agent and
 // zoom keys.
 func (m Model) barContextLabel() string {
+	if m.screen == screenOrchestrator {
+		label := purpleStyle.Render("orchestrator")
+		if m.current != nil {
+			label += dimStyle.Render(" · " + m.current.repo + " / " + m.current.worktree)
+		}
+		return label
+	}
 	if m.current == nil {
 		return ""
 	}
@@ -534,6 +548,8 @@ func (m Model) barZones() []barZone {
 		{screenEditor, glyph(m.destinationGlyph(screenEditor), boldGreen, m.screen == screenEditor, has)},
 		{screenAgent, agent},
 		{screenTerminal, glyph(m.destinationGlyph(screenTerminal), boldAccent, m.screen == screenTerminal, has)},
+		// The orchestrator tab is always reachable, like the deck.
+		{screenOrchestrator, glyph(m.destinationGlyph(screenOrchestrator), boldYellow, m.screen == screenOrchestrator, true)},
 	}
 	// On narrow terminals, optional inactive destinations yield before the
 	// anchored workspace identity. Every destination remains keyboard-reachable.
@@ -1779,6 +1795,7 @@ func (m Model) renderHelp(h int) string {
 		row(m.keys.Picker, "back to the deck"),
 		row(m.keys.Back, "return to previous location"),
 		row(m.keys.GlobalConfig, "open home workspace (~)"),
+		row(m.keys.Orchestrator, "orchestrator tab (press again to go back)"),
 		row(m.keys.Palette, "agent board"),
 		row(m.keys.CommandPalette, "command palette (every action)"),
 	)
@@ -1835,6 +1852,7 @@ func (m Model) navigationLegend() string {
 		m.destinationGlyph(screenEditor) + " editor",
 		m.destinationGlyph(screenAgent) + " agent",
 		m.destinationGlyph(screenTerminal) + " terminal",
+		m.destinationGlyph(screenOrchestrator) + " orchestrator",
 	}
 	return helpStyle.Render(strings.Join(parts, " · "))
 }

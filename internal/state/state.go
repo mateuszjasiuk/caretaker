@@ -19,6 +19,9 @@ type State struct {
 	path       string
 	LastOpened map[string]int64           `json:"last_opened"` // "repo/worktree" -> unix seconds
 	Workspaces map[string]*WorkspaceState `json:"workspaces"`  // "repo/worktree" -> agent pool
+	// Queues holds messages waiting for a workspace's agent to go idle, so a
+	// note queued just before ct exits is still delivered on the next run.
+	Queues map[string][]string `json:"queues,omitempty"` // "repo/worktree" -> pending messages
 
 	// Snapshot/Write bookkeeping: seq numbers snapshots as they're taken,
 	// written tracks the newest one flushed, and writeMu serialises flushes so
@@ -58,7 +61,7 @@ func dir() (string, error) {
 // Load reads the state file, returning an empty (usable) state if it's missing
 // or unreadable. It never errors so a corrupt/absent file can't block startup.
 func Load() *State {
-	s := &State{LastOpened: map[string]int64{}, Workspaces: map[string]*WorkspaceState{}}
+	s := &State{LastOpened: map[string]int64{}, Workspaces: map[string]*WorkspaceState{}, Queues: map[string][]string{}}
 	d, err := dir()
 	if err != nil {
 		return s
@@ -74,6 +77,9 @@ func Load() *State {
 	}
 	if s.Workspaces == nil {
 		s.Workspaces = map[string]*WorkspaceState{}
+	}
+	if s.Queues == nil {
+		s.Queues = map[string][]string{}
 	}
 	for _, workspace := range s.Workspaces {
 		if workspace != nil {
@@ -114,6 +120,56 @@ func (s *State) SetAgents(key string, agents []AgentState, active int) {
 	stored := append([]AgentState(nil), agents...)
 	normalizeAgents(stored)
 	s.Workspaces[key] = &WorkspaceState{Agents: stored, ActiveAgent: active}
+}
+
+// Enqueue appends text to key's pending messages.
+func (s *State) Enqueue(key, text string) {
+	s.Queues[key] = append(s.Queues[key], text)
+}
+
+// Queue returns key's pending messages in delivery order.
+func (s *State) Queue(key string) []string { return s.Queues[key] }
+
+// Dequeue removes and returns the first pending message for key. ok is false
+// when nothing is queued.
+func (s *State) Dequeue(key string) (text string, ok bool) {
+	q := s.Queues[key]
+	if len(q) == 0 {
+		return "", false
+	}
+	text = q[0]
+	if len(q) == 1 {
+		delete(s.Queues, key)
+	} else {
+		s.Queues[key] = q[1:]
+	}
+	return text, true
+}
+
+// ClearQueue drops every pending message for key.
+func (s *State) ClearQueue(key string) { delete(s.Queues, key) }
+
+// Drain removes and returns every pending message for key, in order.
+func (s *State) Drain(key string) []string {
+	q := s.Queues[key]
+	delete(s.Queues, key)
+	return q
+}
+
+// FilterQueue drops key's pending messages for which keep returns false.
+func (s *State) FilterQueue(key string, keep func(string) bool) {
+	q := s.Queues[key]
+	kept := q[:0]
+	for _, text := range q {
+		if keep(text) {
+			kept = append(kept, text)
+		}
+	}
+	if len(kept) == 0 {
+		delete(s.Queues, key)
+		return
+	}
+	s.Queues[key] = kept
 }
 
 // normalizeAgents migrates state written before providers were persisted.

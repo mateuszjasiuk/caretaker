@@ -126,7 +126,7 @@ func TestTabAtMapsIcons(t *testing.T) {
 		t.Error("tabAt should ignore non-bar rows")
 	}
 
-	// Scanning the bar row should hit the four tabs left-to-right in order,
+	// Scanning the bar row should hit the five icons left-to-right in order,
 	// regardless of each glyph's rendered width.
 	var seen []screen
 	for x := 0; x < 80; x++ {
@@ -136,7 +136,7 @@ func TestTabAtMapsIcons(t *testing.T) {
 			}
 		}
 	}
-	want := []screen{screenPicker, screenEditor, screenAgent, screenTerminal}
+	want := []screen{screenPicker, screenEditor, screenAgent, screenTerminal, screenOrchestrator}
 	if len(seen) != len(want) {
 		t.Fatalf("expected tabs %v, got %v", want, seen)
 	}
@@ -3615,5 +3615,25 @@ func TestCreatingSpinnerTimerSelfDisarms(t *testing.T) {
 	m = mm.(Model)
 	if m.creatingTicking || cmd != nil {
 		t.Fatal("the tick should disarm once nothing is being set up")
+	}
+}
+
+func TestOrchestratorIconLightsOnlyForItsAgent(t *testing.T) {
+	plain := &session.Session{}
+	orch := &session.Session{Role: orchestratorRole}
+	ws := &session.Workspace{Agents: []*session.Session{plain, orch}}
+	m := sampleModel()
+	m.current = &workspaceRef{repo: "r", worktree: "(main)", key: "r/(main)", ws: ws}
+	m.screen = screenAgent
+	if m.onOrchestrator() {
+		t.Fatal("a plain agent should not light the orchestrator icon")
+	}
+	ws.ActiveAgent = 1
+	if !m.onOrchestrator() {
+		t.Fatal("the orchestrator agent on screen should light the icon")
+	}
+	m.screen = screenEditor
+	if m.onOrchestrator() {
+		t.Fatal("the icon lights only on the agent view")
 	}
 }

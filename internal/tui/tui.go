@@ -46,6 +46,10 @@ const (
 	screenAgent
 	screenTerminal
 	screenSetup
+	// screenOrchestrator is not a view. It is the bar icon that opens the
+	// orchestrator agent (see openOrchestrator); the bar lights it while that
+	// agent is on screen.
+	screenOrchestrator
 )
 
 // next cycles among the session views (editor → agent → terminal → editor).
@@ -3713,6 +3717,9 @@ func (m Model) deckClick(x, y int) (tea.Model, tea.Cmd, bool) {
 // session tabs only switch when a workspace is active. Switching to the
 // picker refreshes the deck, matching the picker key.
 func (m Model) selectTab(s screen) (tea.Model, tea.Cmd) {
+	if s == screenOrchestrator {
+		return m.openOrchestrator()
+	}
 	if s == screenPicker || m.current != nil {
 		wasSession := m.screen != screenPicker
 		m.screen = s

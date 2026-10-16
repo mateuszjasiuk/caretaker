@@ -138,3 +138,24 @@ func TestDrainQueue(t *testing.T) {
 		t.Fatal("drain should remove the key")
 	}
 }
+
+func TestLoadDropsRetiredOrchestratorWorkspace(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	s := Load()
+	s.SetAgents("~/orchestrator", []AgentState{{Provider: agent.Claude, SessionID: "x", Label: "orchestrator"}}, 0)
+	s.Touch("~/orchestrator")
+	s.Enqueue("~/orchestrator", "note")
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	s = Load()
+	if _, ok := s.Workspaces["~/orchestrator"]; ok {
+		t.Fatal("retired workspace survived Load")
+	}
+	if _, ok := s.LastOpened["~/orchestrator"]; ok {
+		t.Fatal("retired last_opened entry survived Load")
+	}
+	if len(s.Queue("~/orchestrator")) != 0 {
+		t.Fatal("retired queue survived Load")
+	}
+}

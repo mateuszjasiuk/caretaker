@@ -607,6 +607,15 @@ func mainWorktree(g Group) (WorktreeView, bool) {
 	return WorktreeView{}, false
 }
 
+// onOrchestrator reports whether the orchestrator agent is on screen.
+func (m Model) onOrchestrator() bool {
+	if m.screen != screenAgent || m.current == nil || m.current.ws == nil {
+		return false
+	}
+	a := m.current.ws.ActiveAgentSession()
+	return a != nil && a.Role == orchestratorRole
+}
+
 // orchestratorIndex finds the orchestrator agent in ws, or -1.
 func orchestratorIndex(ws *session.Workspace) int {
 	if ws == nil {

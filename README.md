@@ -196,8 +196,10 @@ system prompt describes `ct ctl` and the rules below, and it runs on the model
 from `[orchestrator]` (`sonnet` by default). It shows in the board and the bar
 like any other agent, and it resumes its conversation across runs.
 
-Press `alt+o` or pick "open orchestrator" in the command palette to go to it.
-ct opens the main checkout of the current repo (or the repo selected on the
+Press `alt+o`, click the orchestrator icon at the right end of the bar's tab
+row, or pick "open orchestrator" in the command palette to go to it. The icon
+is always there and lights up while the orchestrator is on screen. ct opens
+the main checkout of the current repo (or the repo selected on the
 deck) and focuses the orchestrator agent, starting one the first time. Nothing
 pushes events into it: you talk to it when you want coordination, such as
 spawning worktrees for a batch of tasks, briefing an agent, or getting an

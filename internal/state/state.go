@@ -89,12 +89,6 @@ func Load() *State {
 			normalizeAgents(workspace.Agents)
 		}
 	}
-	// The orchestrator used to be a synthetic workspace under this key. It is
-	// an agent in a repo's main checkout now; drop what older builds saved.
-	const retiredOrchestrator = "~/orchestrator"
-	delete(s.Workspaces, retiredOrchestrator)
-	delete(s.Queues, retiredOrchestrator)
-	delete(s.LastOpened, retiredOrchestrator)
 	return s
 }
 

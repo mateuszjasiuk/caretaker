@@ -42,6 +42,8 @@ type Session struct {
 	// runs under. It lets ct resume the same conversation across runs; empty for
 	// non-agent sessions and conversations whose provider has not supplied an ID.
 	SessionID string
+	// Role is the special job this agent was started with (see Spec.Role).
+	Role string
 	// Events carries lifecycle notifications from the provider integration.
 	Events <-chan agent.Event
 
@@ -181,6 +183,7 @@ func StartSpec(spec Spec, dir string, w, h int, dirty func(*Session)) (*Session,
 		Title:     spec.Title,
 		Provider:  spec.Provider,
 		SessionID: spec.SessionID,
+		Role:      spec.Role,
 		Events:    spec.Events,
 		cmd:       cmd,
 		pty:       f,

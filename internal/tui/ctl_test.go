@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -182,35 +184,53 @@ func TestQueueStateRoundTrip(t *testing.T) {
 	}
 }
 
-func TestNoteToOrchestratorOnlyWhenOpen(t *testing.T) {
+func TestOrchestratorRepoAndMainWorktree(t *testing.T) {
 	m := ctlModel(t)
-	m.ctrl = NewController(config.Config{Orchestrator: config.Orchestrator{Notify: true}})
-	m.noteToOrchestrator("r/a", "calm-fox", AgentStatus{Status: "idle"})
-	if q := m.state.Queue(orchestratorKey); len(q) != 0 {
-		t.Fatalf("queued without an orchestrator: %v", q)
+	m.screen = screenPicker
+	g, ok := m.orchestratorRepo()
+	if !ok || g.Repo.Name != "r" {
+		t.Fatalf("single repo should be picked without a selection: %v %v", g.Repo.Name, ok)
+	}
+	main, ok := mainWorktree(g)
+	if !ok || main.WT.Path != "/r" {
+		t.Fatalf("main worktree = %v %v", main.WT.Path, ok)
+	}
+	m.groups = append(m.groups, Group{Repo: repo.Repo{Name: "s", Path: "/s"}})
+	m.activeCursor = -1 // nothing selected on the deck
+	if _, ok := m.orchestratorRepo(); ok {
+		t.Fatal("two repos and nothing selected should not pick one")
+	}
+	m.current = &workspaceRef{repo: "s", worktree: "x", key: "s/x"}
+	if g, ok := m.orchestratorRepo(); !ok || g.Repo.Name != "s" {
+		t.Fatalf("current workspace's repo should win: %v %v", g.Repo.Name, ok)
 	}
 }
 
-func TestNoteToOrchestratorKeepsOnlyLatestPerAgent(t *testing.T) {
-	m := ctlModel(t)
-	m.ctrl = NewController(config.Config{Orchestrator: config.Orchestrator{Notify: true}})
-	if _, err := m.mgr.Activate(orchestratorKey, t.TempDir(), nil, 80, 24); err != nil {
+func TestOrchestratorAgentSpecCarriesRoleModelAndNotes(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("CT_CONFIG", filepath.Join(cfgDir, "config.toml"))
+	cfg := config.Default()
+	cfg.Agent = "claude"
+	c := NewController(cfg)
+	spec, err := c.OrchestratorAgentSpec("r", "", "")
+	if err != nil {
 		t.Fatal(err)
 	}
-	m.noteToOrchestrator("r/a", "calm-fox", AgentStatus{Status: "idle"})
-	m.noteToOrchestrator("r/b", "bold-owl", AgentStatus{Status: "idle"})
-	m.noteToOrchestrator("r/a", "calm-fox", AgentStatus{Status: "waiting", WaitingFor: "permission"})
-	got := m.state.Queue(orchestratorKey)
-	want := []string{
-		"[ct] r/b agent bold-owl is now idle",
-		"[ct] r/a agent calm-fox is now waiting (permission)",
+	if spec.Role != orchestratorRole || spec.Title == "" {
+		t.Fatalf("spec role/title = %q %q", spec.Role, spec.Title)
 	}
-	if len(got) != len(want) {
-		t.Fatalf("queue = %q, want %q", got, want)
+	argv := strings.Join(spec.Argv, " ")
+	tasks := filepath.Join(cfgDir, "orchestrator", "r", "tasks.md")
+	if !strings.Contains(argv, "--model sonnet") || !strings.Contains(argv, tasks) {
+		t.Fatalf("argv missing model or notes path: %s", argv)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("queue[%d] = %q, want %q", i, got[i], want[i])
-		}
+	if _, err := os.Stat(tasks); err != nil {
+		t.Fatalf("tasks.md not seeded: %v", err)
+	}
+	if idx := orchestratorIndex(&session.Workspace{Agents: []*session.Session{{}, {Role: orchestratorRole}}}); idx != 1 {
+		t.Fatalf("orchestratorIndex = %d, want 1", idx)
+	}
+	if repoOfKey("r/a") != "r" {
+		t.Fatal("repoOfKey")
 	}
 }

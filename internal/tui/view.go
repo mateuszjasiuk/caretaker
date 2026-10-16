@@ -541,10 +541,10 @@ func (m Model) barZones() []barZone {
 		{screenPicker, ct},
 		{screenEditor, glyph(m.destinationGlyph(screenEditor), boldGreen, m.screen == screenEditor, has)},
 		{screenAgent, agent},
-		{screenTerminal, glyph(m.destinationGlyph(screenTerminal), boldAccent, m.screen == screenTerminal, has)},
 		// The orchestrator icon is a shortcut to its agent, reachable like the
 		// deck; it lights up while that agent is on screen.
 		{screenOrchestrator, glyph(m.destinationGlyph(screenOrchestrator), boldYellow, m.onOrchestrator(), true)},
+		{screenTerminal, glyph(m.destinationGlyph(screenTerminal), boldAccent, m.screen == screenTerminal, has)},
 	}
 	// On narrow terminals, optional inactive destinations yield before the
 	// anchored workspace identity. Every destination remains keyboard-reachable.
@@ -1846,8 +1846,8 @@ func (m Model) navigationLegend() string {
 		m.destinationGlyph(screenPicker) + " deck",
 		m.destinationGlyph(screenEditor) + " editor",
 		m.destinationGlyph(screenAgent) + " agent",
-		m.destinationGlyph(screenTerminal) + " terminal",
 		m.destinationGlyph(screenOrchestrator) + " orchestrator",
+		m.destinationGlyph(screenTerminal) + " terminal",
 	}
 	return helpStyle.Render(strings.Join(parts, " · "))
 }

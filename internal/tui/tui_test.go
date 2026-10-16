@@ -136,7 +136,7 @@ func TestTabAtMapsIcons(t *testing.T) {
 			}
 		}
 	}
-	want := []screen{screenPicker, screenEditor, screenAgent, screenTerminal, screenOrchestrator}
+	want := []screen{screenPicker, screenEditor, screenAgent, screenOrchestrator, screenTerminal}
 	if len(seen) != len(want) {
 		t.Fatalf("expected tabs %v, got %v", want, seen)
 	}

@@ -72,6 +72,10 @@ shell  = "/bin/zsh" # defaults to the current $SHELL when omitted
 worktree_path = ".worktrees/{name}"
 branch_name   = "{name}"
 
+# Reopen the worktrees that were open when ct last quit. They start in the
+# background while the deck is shown.
+restore_sessions = false
+
 # Both providers are enabled by default, with Claude initially selected, so
 # this whole section may be omitted. `default` must also appear in `enabled`.
 [agents]

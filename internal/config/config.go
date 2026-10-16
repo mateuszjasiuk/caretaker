@@ -36,6 +36,9 @@ type Config struct {
 	WorktreePath string `toml:"worktree_path"`
 	// BranchName is the branch-name template for new worktrees. Supports {name}.
 	BranchName string `toml:"branch_name"`
+	// RestoreSessions reopens, at startup, the workspaces that were open when
+	// ct last quit. They start in the background; the deck is shown as usual.
+	RestoreSessions bool `toml:"restore_sessions"`
 	// Keys configures the reserved navigation keystrokes.
 	Keys Keys `toml:"keys"`
 	// Usage configures the plan usage-limit gauge.

@@ -1217,15 +1217,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setError("load error: " + msg.err.Error())
 			return m, nil
 		}
+		firstLoad := !m.groupsLoaded
 		m.groups = msg.groups
 		m.groupsLoaded = true
 		m.recomputeMatches()
 		m.recomputeActive()
 		m.computeRecentRanks()
 		m = m.showCtlRemove() // a parked `ct ctl remove`, once the deck is idle
+		var restore tea.Cmd
+		if firstLoad && m.ctrl.RestoreSessions() {
+			m, restore = m.restoreSessions()
+		}
 		// Refresh the deck's stack cache for the active worktrees, respecting the
 		// freshness window (the deck's `r` re-kicks with force).
-		return m, tea.Batch(m.kickStackFetches(false)...)
+		return m, tea.Batch(append(m.kickStackFetches(false), restore)...)
 
 	case creatingTickMsg:
 		// Re-arm only while something is still being set up, so the timer stops on
@@ -3038,6 +3043,7 @@ func (m Model) writeStateCmd() tea.Cmd {
 	if m.state == nil {
 		return nil
 	}
+	m.recordOpen()
 	sn, ok := m.state.Snapshot()
 	if !ok {
 		return nil
@@ -3052,8 +3058,81 @@ func (m Model) writeStateCmd() tea.Cmd {
 // the program exits so a pending background write can't be lost.
 func (m Model) FlushState() {
 	if m.state != nil {
+		m.recordOpen()
 		_ = m.state.Save()
 	}
+}
+
+// recordOpen notes the open workspaces in the state about to be written, so
+// the next start can reopen them (see restoreSessions).
+func (m Model) recordOpen() {
+	if m.state != nil && m.mgr != nil {
+		m.state.SetOpen(m.mgr.Keys())
+	}
+}
+
+// restoreTargets resolves the workspaces open at the last quit to the ones
+// that still exist and are not open yet, as (key, path) pairs. The home
+// workspace is listed with an empty path; the caller knows where it lives.
+func (m Model) restoreTargets() [][2]string {
+	if m.state == nil {
+		return nil
+	}
+	var out [][2]string
+	for _, key := range m.state.Open {
+		if m.mgr.Has(key) {
+			continue
+		}
+		if key == "~/config" {
+			out = append(out, [2]string{key, ""})
+			continue
+		}
+		for _, g := range m.groups {
+			for _, wv := range g.Worktrees {
+				if wsKey(g.Repo.Name, wv.WT.Name) == key {
+					out = append(out, [2]string{key, wv.WT.Path})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// restoreSessions reopens last run's workspaces in the background. It runs
+// once, on the first deck load, when restore_sessions is on.
+func (m Model) restoreSessions() (Model, tea.Cmd) {
+	targets := m.restoreTargets()
+	var cmds []tea.Cmd
+	opened := 0
+	for _, t := range targets {
+		key, path := t[0], t[1]
+		if key == "~/config" {
+			home, err := m.ctrl.GlobalConfigDir()
+			if err == nil {
+				err = m.ctrl.EnsureHomeDirTrusted()
+			}
+			if err != nil {
+				m.setError("restore error: " + err.Error())
+				continue
+			}
+			m.homeWSPath, m.homeWSKey, path = home, key, home
+		}
+		var (
+			cmd tea.Cmd
+			err error
+		)
+		if m, cmd, err = m.openWorkspaceBackground(key, path); err != nil {
+			m.setError("restore error (" + key + "): " + err.Error())
+			continue
+		}
+		cmds = append(cmds, cmd)
+		opened++
+	}
+	if opened > 0 {
+		m.recomputeActive()
+		cmds = append(cmds, m.flashCmd(fmt.Sprintf("restored %d workspace(s)", opened)))
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // --- key handling ---

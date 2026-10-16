@@ -304,8 +304,7 @@ func (m Model) barContextLabel() string {
 	if seg, ok := m.paneSegment(); ok {
 		s = accentStyle.Render(seg) + sep + s
 	}
-	// The orchestrator announces itself through its lit bar icon, not here.
-	if n := len(ws.Agents); m.screen == screenAgent && n > 0 && !m.onOrchestrator() {
+	if n := len(ws.Agents); m.screen == screenAgent && n > 0 {
 		if a := ws.ActiveAgentSession(); a != nil {
 			provider := normalizedProvider(a.Provider)
 			identity := provider.String()
@@ -1790,7 +1789,7 @@ func (m Model) renderHelp(h int) string {
 		row(m.keys.Picker, "back to the deck"),
 		row(m.keys.Back, "return to previous location"),
 		row(m.keys.GlobalConfig, "open home workspace (~)"),
-		row(m.keys.Orchestrator, "open the orchestrator (repo's main checkout)"),
+		row(m.keys.Orchestrator, "orchestrator view (press again to go back)"),
 		row(m.keys.Palette, "agent board"),
 		row(m.keys.CommandPalette, "command palette (every action)"),
 	)

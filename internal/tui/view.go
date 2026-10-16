@@ -542,7 +542,7 @@ func (m Model) barZones() []barZone {
 		{screenAgent, agent},
 		// The orchestrator icon is a shortcut to its agent, reachable like the
 		// deck; it lights up while that agent is on screen.
-		{screenOrchestrator, glyph(m.destinationGlyph(screenOrchestrator), boldYellow, m.onOrchestrator(), true)},
+		{screenOrchestrator, glyph(m.destinationGlyph(screenOrchestrator), boldYellow, m.screen == screenOrchestrator, true)},
 		{screenTerminal, glyph(m.destinationGlyph(screenTerminal), boldAccent, m.screen == screenTerminal, has)},
 	}
 	// On narrow terminals, optional inactive destinations yield before the

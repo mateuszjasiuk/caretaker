@@ -1847,6 +1847,9 @@ func (m Model) agentGroup(key, repoName, wtName, path string) (agentGroup, bool)
 		g.opened = m.state.Opened(key)
 	}
 	for i, a := range ws.Agents {
+		if a.Role == orchestratorRole {
+			continue // reached through its bar icon, not listed with the workers
+		}
 		pid := a.Pid()
 		attn := m.agentAttn(pid)
 		provider := normalizedProvider(a.Provider)
@@ -1891,7 +1894,8 @@ func (m Model) stripGroups() []agentGroup {
 			return
 		}
 		seen[key] = true
-		if g, ok := m.agentGroup(key, repoName, wtName, path); ok {
+		// A workspace whose only agent is the orchestrator has nothing to show.
+		if g, ok := m.agentGroup(key, repoName, wtName, path); ok && len(g.agents) > 0 {
 			groups = append(groups, g)
 		}
 	}
@@ -2139,9 +2143,6 @@ func (m Model) restartBoardAgent(r boardRow) (tea.Model, tea.Cmd) {
 		err  error
 	)
 	switch {
-	case old.Role == orchestratorRole && provider == agent.Claude:
-		// Keep the orchestrator instructions across a restart.
-		spec, err = m.ctrl.OrchestratorAgentSpec(r.repo, old.SessionID, old.Title)
 	case old.SessionID == "":
 		spec, err = m.ctrl.NewProviderAgentSpec(provider, old.Title, "")
 	default:

@@ -193,8 +193,9 @@ The orchestrator is a Claude agent that sees every worktree and can start,
 message, and stop the agents working in them. It is an ordinary agent in the
 repo's main checkout, the `(main)` row of the deck, with two differences: its
 system prompt describes `ct ctl` and the rules below, and it runs on the model
-from `[orchestrator]` (`sonnet` by default). It shows in the board and the bar
-like any other agent, and it resumes its conversation across runs.
+from `[orchestrator]` (`sonnet` by default). It is not listed in the agent
+board or the bar's agent strip; the orchestrator icon stands for it. It resumes
+its conversation across runs.
 
 Press `alt+o`, click the orchestrator icon at the right end of the bar's tab
 row, or pick "open orchestrator" in the command palette to go to it. The icon

@@ -304,7 +304,8 @@ func (m Model) barContextLabel() string {
 	if seg, ok := m.paneSegment(); ok {
 		s = accentStyle.Render(seg) + sep + s
 	}
-	if n := len(ws.Agents); m.screen == screenAgent && n > 0 {
+	// The orchestrator announces itself through its lit bar icon, not here.
+	if n := len(ws.Agents); m.screen == screenAgent && n > 0 && !m.onOrchestrator() {
 		if a := ws.ActiveAgentSession(); a != nil {
 			provider := normalizedProvider(a.Provider)
 			identity := provider.String()

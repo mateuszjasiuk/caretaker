@@ -2158,7 +2158,7 @@ func (m Model) restartBoardAgent(r boardRow) (tea.Model, tea.Cmd) {
 	}
 	old := ws.Agents[r.agentIdx]
 	provider := normalizedProvider(old.Provider)
-	if provider == agent.Claude && r.key == "~/config" {
+	if provider == agent.Claude && r.key == homeKey {
 		if err := m.ctrl.EnsureHomeDirTrusted(); err != nil {
 			m.setError("trust setup error: " + err.Error())
 			return m, nil
@@ -2716,7 +2716,7 @@ func (m Model) activateGlobalConfig() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.homeWSPath = home
-	m.homeWSKey = "~/config"
+	m.homeWSKey = homeKey
 	return m.activate("~", "config", home)
 }
 
@@ -2941,16 +2941,7 @@ func (m Model) workspaceSpecs(key string, addDefault bool) ([]session.Spec, erro
 		specs = append(specs, spec)
 	} else {
 		for _, a := range saved {
-			provider := normalizedProvider(a.Provider)
-			var (
-				spec session.Spec
-				err  error
-			)
-			if a.Role == orchestratorRole && provider == agent.Claude {
-				spec, err = m.ctrl.OrchestratorAgentSpec(repoOfKey(key), a.SessionID, a.Label)
-			} else {
-				spec, err = m.ctrl.RestoreProviderAgentSpec(provider, a.SessionID, a.Label, "")
-			}
+			spec, err := m.restoreAgentSpec(key, a, "")
 			if err != nil {
 				return nil, err
 			}
@@ -2958,6 +2949,16 @@ func (m Model) workspaceSpecs(key string, addDefault bool) ([]session.Spec, erro
 		}
 	}
 	return append(specs, m.ctrl.TermSpec()), nil
+}
+
+// restoreAgentSpec rebuilds one saved agent of workspace key, handing it
+// prompt. An orchestrator comes back with its instructions and model.
+func (m Model) restoreAgentSpec(key string, a state.AgentState, prompt string) (session.Spec, error) {
+	provider := normalizedProvider(a.Provider)
+	if a.Role == orchestratorRole && provider == agent.Claude {
+		return m.ctrl.OrchestratorAgentSpec(repoOfKey(key), a.SessionID, a.Label)
+	}
+	return m.ctrl.RestoreProviderAgentSpec(provider, a.SessionID, a.Label, prompt)
 }
 
 // prepareWorkspaceSpecs starts provider companions before their interactive
@@ -3071,42 +3072,33 @@ func (m Model) recordOpen() {
 	}
 }
 
-// restoreTargets resolves the workspaces open at the last quit to the ones
-// that still exist and are not open yet, as (key, path) pairs. The home
-// workspace is listed with an empty path; the caller knows where it lives.
-func (m Model) restoreTargets() [][2]string {
-	if m.state == nil {
-		return nil
-	}
-	var out [][2]string
-	for _, key := range m.state.Open {
-		if m.mgr.Has(key) {
-			continue
-		}
-		if key == "~/config" {
-			out = append(out, [2]string{key, ""})
-			continue
-		}
-		for _, g := range m.groups {
-			for _, wv := range g.Worktrees {
-				if wsKey(g.Repo.Name, wv.WT.Name) == key {
-					out = append(out, [2]string{key, wv.WT.Path})
-				}
+// worktreePath is the directory of the worktree under key, main checkouts
+// included.
+func (m Model) worktreePath(key string) (string, bool) {
+	for _, g := range m.groups {
+		for _, wv := range g.Worktrees {
+			if wsKey(g.Repo.Name, wv.WT.Name) == key {
+				return wv.WT.Path, true
 			}
 		}
 	}
-	return out
+	return "", false
 }
 
 // restoreSessions reopens last run's workspaces in the background. It runs
 // once, on the first deck load, when restore_sessions is on.
 func (m Model) restoreSessions() (Model, tea.Cmd) {
-	targets := m.restoreTargets()
+	if m.state == nil {
+		return m, nil
+	}
 	var cmds []tea.Cmd
 	opened := 0
-	for _, t := range targets {
-		key, path := t[0], t[1]
-		if key == "~/config" {
+	for _, key := range m.state.Open {
+		if m.mgr.Has(key) {
+			continue
+		}
+		path, ok := m.worktreePath(key)
+		if key == homeKey {
 			home, err := m.ctrl.GlobalConfigDir()
 			if err == nil {
 				err = m.ctrl.EnsureHomeDirTrusted()
@@ -3115,13 +3107,16 @@ func (m Model) restoreSessions() (Model, tea.Cmd) {
 				m.setError("restore error: " + err.Error())
 				continue
 			}
-			m.homeWSPath, m.homeWSKey, path = home, key, home
+			m.homeWSPath, m.homeWSKey, path, ok = home, key, home, true
+		}
+		if !ok {
+			continue // the worktree is gone
 		}
 		var (
 			cmd tea.Cmd
 			err error
 		)
-		if m, cmd, err = m.openWorkspaceBackground(key, path); err != nil {
+		if m, cmd, err = m.openWorkspaceBackground(key, path, true); err != nil {
 			m.setError("restore error (" + key + "): " + err.Error())
 			continue
 		}
@@ -3580,7 +3575,6 @@ func (m Model) launchAgent() (tea.Model, tea.Cmd) {
 	w, h := m.sessionSize()
 	var restoredWatches tea.Cmd
 
-	const homeKey = "~/config"
 	isHome := m.formLocation == 1
 	provider := normalizedProvider(m.formProvider)
 	spec, err := m.ctrl.NewProviderAgentSpec(provider, label, prompt)
@@ -4902,6 +4896,9 @@ func (m *Model) clearAgentTracking(pid int) {
 }
 
 func wsKey(repoName, wtName string) string { return repoName + "/" + wtName }
+
+// homeKey is the synthetic workspace key of the home-directory workspace.
+const homeKey = "~/config"
 
 // repoOfKey returns the repo half of a workspace key.
 func repoOfKey(key string) string {

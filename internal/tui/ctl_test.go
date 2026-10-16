@@ -235,20 +235,15 @@ func TestOrchestratorAgentSpecCarriesRoleModelAndNotes(t *testing.T) {
 	}
 }
 
-func TestRestoreTargetsResolvesSavedOpenWorkspaces(t *testing.T) {
+func TestWorktreePathIncludesMainCheckout(t *testing.T) {
 	m := ctlModel(t)
-	m.state.SetOpen([]string{"r/a", "r/gone", "~/config", "r/(main)"})
-	if _, err := m.mgr.Activate("r/a", t.TempDir(), nil, 80, 24); err != nil {
-		t.Fatal(err)
+	if p, ok := m.worktreePath("r/(main)"); !ok || p != "/r" {
+		t.Fatalf("main checkout path = %q %v", p, ok)
 	}
-	got := m.restoreTargets()
-	want := [][2]string{{"~/config", ""}, {"r/(main)", "/r"}}
-	if len(got) != len(want) {
-		t.Fatalf("targets = %v, want %v", got, want)
+	if p, ok := m.worktreePath("r/a"); !ok || p != "/r/.worktrees/a" {
+		t.Fatalf("worktree path = %q %v", p, ok)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("targets[%d] = %v, want %v", i, got[i], want[i])
-		}
+	if _, ok := m.worktreePath("r/gone"); ok {
+		t.Fatal("a missing worktree should not resolve")
 	}
 }

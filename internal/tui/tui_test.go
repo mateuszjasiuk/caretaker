@@ -3623,9 +3623,6 @@ func TestOrchestratorViewLeavesWorkspaceCurrent(t *testing.T) {
 	m.current = &workspaceRef{repo: "r", worktree: "w", key: "r/w"}
 	m.orchFrom = screenTerminal
 	m.screen = screenOrchestrator
-	if !m.onOrchestrator() {
-		t.Fatal("the icon should light on the orchestrator view")
-	}
 	// The jump keys act on the workspace underneath.
 	mm, _ := m.gotoScreen(screenAgent)
 	if got := mm.(Model); got.screen != screenAgent || got.current.key != "r/w" {

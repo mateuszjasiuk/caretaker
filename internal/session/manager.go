@@ -42,6 +42,9 @@ type Spec struct {
 	// SessionID is the provider-owned, opaque conversation ID recorded on the
 	// started Session so ct can persist and later resume it.
 	SessionID string
+	// Role marks an agent with a special job, such as "orchestrator". ct saves
+	// it so the agent is rebuilt with the same instructions on resume.
+	Role string
 	// Env adds or replaces process environment entries in KEY=value form.
 	Env []string
 	// UnsetEnv removes inherited process environment entries by key. Removal

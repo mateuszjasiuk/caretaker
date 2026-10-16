@@ -101,7 +101,7 @@ palette     = "alt+a"  # agent board: focus, create, restart, or remove agents
 next_agent  = "f4"     # next agent in the active worktree
 prev_agent  = "f3"     # previous agent in the active worktree
 global_config = "alt+g" # open the home-directory workspace
-orchestrator = "alt+o" # open the orchestrator workspace (see below)
+orchestrator = "alt+o" # open the orchestrator agent (see below)
 attention   = "alt+n"  # jump to the agent needing attention (cycles on repeat)
 back        = "alt+b"  # return to the previous work location (toggles on repeat)
 usage       = "alt+u"  # plan usage for enabled agent providers
@@ -134,15 +134,12 @@ charset = "dots"    # dots (braille) | shade | blocks
 speed   = 0.3       # animation rate; 0 freezes the pattern
 width   = 40        # percent of the terminal width; 0 disables the panel
 
-# The orchestrator: one Claude session that manages work across worktrees
-# through `ct ctl` (see "Orchestrator" below).
+# The orchestrator: a Claude agent in a repo's main checkout that manages work
+# across its worktrees through `ct ctl` (see "Orchestrator" below).
 [orchestrator]
-# Directory the orchestrator runs in and keeps its notes (tasks.md).
-# Defaults to ~/.caretaker/orchestrator, which ct creates and seeds.
-dir = ""
-# Queue a short note to the orchestrator whenever a worktree agent finishes a
-# turn or stops to ask for input. Delivered as a message once it is idle.
-notify = true
+# Claude model for the orchestrator, passed as --model. It coordinates rather
+# than codes, so the default is the cheaper one.
+model = "sonnet"
 
 # Stack merges require a confirmation by default. This setting bypasses ct's
 # confirmation; it is not GitHub's "auto-merge when checks pass" feature.
@@ -192,22 +189,25 @@ args = ["exec", "--", "codex"]
 
 ## Orchestrator
 
-The orchestrator is a Claude session that sees every worktree and can start,
-message, and stop the agents working in them. It has its own tab in the bar,
-next to the deck, editor, agent, and terminal tabs, and that tab is always
-there. Press `alt+o`, click the tab, or pick "orchestrator" in the command
-palette to show it; press `alt+o` again to go back to where you were. Your
-current worktree stays current underneath, so the cycle keys lead back to it.
-The session starts the first time you open the tab, keeps running in the
-background after, and resumes its conversation across runs.
+The orchestrator is a Claude agent that sees every worktree and can start,
+message, and stop the agents working in them. It is an ordinary agent in the
+repo's main checkout, the `(main)` row of the deck, with two differences: its
+system prompt describes `ct ctl` and the rules below, and it runs on the model
+from `[orchestrator]` (`sonnet` by default). It shows in the board and the bar
+like any other agent, and it resumes its conversation across runs.
 
-The orchestrator runs in its own directory, `~/.caretaker/orchestrator` by
-default (`[orchestrator] dir` moves it). ct seeds it with a `CLAUDE.md` and a
-`tasks.md`, and the orchestrator is told to keep its plan in `tasks.md`: one
-line per task, with the worktree and its state. That file, not the conversation,
-is its memory. When the conversation gets long, pick "new orchestrator session"
-in the command palette: it starts a fresh session with the same instructions,
-which reads `tasks.md` and carries on.
+Press `alt+o` or pick "open orchestrator" in the command palette to go to it.
+ct opens the main checkout of the current repo (or the repo selected on the
+deck) and focuses the orchestrator agent, starting one the first time. Nothing
+pushes events into it: you talk to it when you want coordination, such as
+spawning worktrees for a batch of tasks, briefing an agent, or getting an
+overview of what is running.
+
+Its plan lives outside the repo in `~/.caretaker/orchestrator/<repo>/tasks.md`,
+one line per task with the worktree and its state. That file, not the
+conversation, is its memory. When the conversation gets long, pick "new
+orchestrator session" in the palette: it replaces the session with a fresh one
+that reads `tasks.md` and carries on.
 
 The orchestrator acts on ct through `ct ctl`, a command that talks to the
 running ct over a Unix socket. You can use it too, from any terminal:
@@ -229,15 +229,9 @@ message as the first prompt. `spawn` creates the worktree and starts an agent
 on the prompt without switching your view. `remove` never deletes on its own:
 it raises ct's usual remove-confirm panel the next time you are on the deck.
 
-Two things to know:
-
-- The orchestrator cannot answer another agent's permission prompt or question.
-  It tells you which worktree is waiting; you answer there.
-- When `notify` is on, ct queues a line like `[ct] repo/name agent calm-fox is
-  now idle` to the orchestrator whenever a worktree agent stops. Notes that pile
-  up while it is busy are delivered as one message, and only the latest note
-  per agent is kept. A note arrives when the orchestrator is idle, so if you are
-  typing to it at that moment it is appended to your draft.
+The orchestrator cannot answer another agent's permission prompt or question.
+It tells you which worktree is waiting; you answer there. ct's own `!` badge
+and the attention key show the same thing without asking the orchestrator.
 
 Each ct instance has its own socket under `~/.local/state/ct/` (or a short
 per-user directory under `/tmp` when that path is too long for a socket). Programs

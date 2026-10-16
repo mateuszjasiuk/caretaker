@@ -126,7 +126,7 @@ func TestTabAtMapsIcons(t *testing.T) {
 		t.Error("tabAt should ignore non-bar rows")
 	}
 
-	// Scanning the bar row should hit the five tabs left-to-right in order,
+	// Scanning the bar row should hit the four tabs left-to-right in order,
 	// regardless of each glyph's rendered width.
 	var seen []screen
 	for x := 0; x < 80; x++ {
@@ -136,7 +136,7 @@ func TestTabAtMapsIcons(t *testing.T) {
 			}
 		}
 	}
-	want := []screen{screenPicker, screenEditor, screenAgent, screenTerminal, screenOrchestrator}
+	want := []screen{screenPicker, screenEditor, screenAgent, screenTerminal}
 	if len(seen) != len(want) {
 		t.Fatalf("expected tabs %v, got %v", want, seen)
 	}
@@ -3615,30 +3615,5 @@ func TestCreatingSpinnerTimerSelfDisarms(t *testing.T) {
 	m = mm.(Model)
 	if m.creatingTicking || cmd != nil {
 		t.Fatal("the tick should disarm once nothing is being set up")
-	}
-}
-
-func TestOrchestratorTabTogglesBackToPreviousView(t *testing.T) {
-	m := sampleModel()
-	m.current = &workspaceRef{repo: "r", worktree: "w", key: "r/w"}
-	m.orchFrom = screenTerminal
-	m.screen = screenOrchestrator
-	mm, _ := m.toggleOrchestrator()
-	if got := mm.(Model).screen; got != screenTerminal {
-		t.Fatalf("toggle from the orchestrator tab went to %v, want the terminal it came from", got)
-	}
-	// Without a workspace underneath, the only place to go back to is the deck.
-	m.current = nil
-	mm, _ = m.toggleOrchestrator()
-	if got := mm.(Model).screen; got != screenPicker {
-		t.Fatalf("toggle with no workspace went to %v, want the deck", got)
-	}
-	// The orchestrator tab never becomes a workspace's remembered view.
-	m = sampleModel()
-	m.current = &workspaceRef{repo: "r", worktree: "w", key: "r/w"}
-	m.screen = screenOrchestrator
-	mm, _ = m.returnToDeck()
-	if s, ok := mm.(Model).lastScreens[m.current.key]; ok && s == screenOrchestrator {
-		t.Fatal("returnToDeck remembered the orchestrator tab for the workspace")
 	}
 }

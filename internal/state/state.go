@@ -44,6 +44,9 @@ type AgentState struct {
 	Provider  agent.Provider `json:"provider"`
 	SessionID string         `json:"session_id"`
 	Label     string         `json:"label"`
+	// Role is set for agents with a special job ("orchestrator"), so the
+	// next open rebuilds them with the same instructions.
+	Role string `json:"role,omitempty"`
 }
 
 // dir returns ct's state directory (honoring XDG_STATE_HOME).
@@ -154,22 +157,6 @@ func (s *State) Drain(key string) []string {
 	q := s.Queues[key]
 	delete(s.Queues, key)
 	return q
-}
-
-// FilterQueue drops key's pending messages for which keep returns false.
-func (s *State) FilterQueue(key string, keep func(string) bool) {
-	q := s.Queues[key]
-	kept := q[:0]
-	for _, text := range q {
-		if keep(text) {
-			kept = append(kept, text)
-		}
-	}
-	if len(kept) == 0 {
-		delete(s.Queues, key)
-		return
-	}
-	s.Queues[key] = kept
 }
 
 // normalizeAgents migrates state written before providers were persisted.

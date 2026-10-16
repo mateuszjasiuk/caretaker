@@ -281,71 +281,55 @@ func (c *Controller) EnsureDirTrusted(dir string) error {
 	return nil
 }
 
-// OrchestratorDir is where the orchestrator session runs: the configured
-// directory, or "orchestrator" next to the config file. It is the
-// orchestrator's own place for notes, outside every repo.
-func (c *Controller) OrchestratorDir() (string, error) {
-	d := c.cfg.Orchestrator.Dir
-	if d == "" {
-		cfgPath, err := config.Path()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(filepath.Dir(cfgPath), "orchestrator"), nil
+// OrchestratorNotesDir is where the orchestrator for repoName keeps its
+// notes: "orchestrator/<repo>" next to the config file, outside the repo.
+func (c *Controller) OrchestratorNotesDir(repoName string) (string, error) {
+	cfgPath, err := config.Path()
+	if err != nil {
+		return "", err
 	}
-	if strings.HasPrefix(d, "~/") || d == "~" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		d = filepath.Join(home, strings.TrimPrefix(d, "~"))
-	}
-	return d, nil
+	return filepath.Join(filepath.Dir(cfgPath), "orchestrator", repoName), nil
 }
 
-// EnsureOrchestratorDir creates the orchestrator directory when it is missing.
-// In the default location it also seeds CLAUDE.md and tasks.md, the files the
-// orchestrator keeps its plan in. Files that exist are left alone, and a
-// configured directory gets no files at all: it may be the user's own.
-func (c *Controller) EnsureOrchestratorDir() (string, error) {
-	dir, err := c.OrchestratorDir()
+// EnsureOrchestratorNotes creates the notes directory for repoName and seeds
+// tasks.md when it is missing, and returns the path of tasks.md.
+func (c *Controller) EnsureOrchestratorNotes(repoName string) (string, error) {
+	dir, err := c.OrchestratorNotesDir(repoName)
 	if err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	if c.cfg.Orchestrator.Dir != "" {
-		return dir, nil
+	tasks := filepath.Join(dir, "tasks.md")
+	if _, err := os.Stat(tasks); err == nil {
+		return tasks, nil
 	}
-	for name, body := range orchestratorFiles {
-		p := filepath.Join(dir, name)
-		if _, err := os.Stat(p); err == nil {
-			continue
-		}
-		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-			return "", err
-		}
+	if err := os.WriteFile(tasks, []byte(orchestratorTasksSeed), 0o644); err != nil {
+		return "", err
 	}
-	return dir, nil
+	return tasks, nil
 }
 
-// OrchestratorNotify reports whether worktree status changes are queued to the
-// orchestrator as messages.
-func (c *Controller) OrchestratorNotify() bool { return c.cfg.Orchestrator.Notify }
-
-// OrchestratorAgentSpec builds the Claude session for the orchestrator
-// workspace: a normal ct-managed session (fresh under id, or resumed when its
-// transcript exists) with the orchestrator instructions appended to its
-// system prompt. The instructions name this ct binary and socket so the
-// agent reaches the ct that started it.
-func (c *Controller) OrchestratorAgentSpec(id, label string) (session.Spec, error) {
+// OrchestratorAgentSpec builds the orchestrator agent for repoName: a normal
+// ct-managed Claude session (fresh under id, or resumed when its transcript
+// exists) on the configured model, with the orchestrator instructions
+// appended to its system prompt. The instructions name this ct binary and
+// the repo's tasks.md.
+func (c *Controller) OrchestratorAgentSpec(repoName, id, label string) (session.Spec, error) {
 	providerCfg, err := c.providerConfig(agent.Claude)
+	if err != nil {
+		return session.Spec{}, err
+	}
+	tasks, err := c.EnsureOrchestratorNotes(repoName)
 	if err != nil {
 		return session.Spec{}, err
 	}
 	if id == "" {
 		id = newSessionID()
+	}
+	if label == "" {
+		label = orchestratorLabel
 	}
 	var spec session.Spec
 	if c.transcriptExists(id) {
@@ -353,7 +337,11 @@ func (c *Controller) OrchestratorAgentSpec(id, label string) (session.Spec, erro
 	} else {
 		spec = c.freshClaudeAgentSpec(providerCfg, id, label, "")
 	}
-	spec.Argv = append(spec.Argv, "--append-system-prompt", orchestratorSystemPrompt(ctCommand()))
+	spec.Role = orchestratorRole
+	if model := c.cfg.Orchestrator.Model; model != "" {
+		spec.Argv = append(spec.Argv, "--model", model)
+	}
+	spec.Argv = append(spec.Argv, "--append-system-prompt", orchestratorSystemPrompt(ctCommand(), tasks))
 	return spec, nil
 }
 

@@ -53,20 +53,13 @@ type Config struct {
 	Orchestrator Orchestrator `toml:"orchestrator"`
 }
 
-// Orchestrator configures the orchestrator workspace: one Claude session that
-// sees every worktree through `ct ctl` and can start, message, and stop the
-// agents working in them.
+// Orchestrator configures the orchestrator agent: a Claude session in a
+// repo's main checkout that sees every worktree through `ct ctl` and can
+// start, message, and stop the agents working in them.
 type Orchestrator struct {
-	// Dir is the directory the orchestrator session runs in and keeps its
-	// notes (tasks.md). Empty means "orchestrator" next to the config file,
-	// which ct creates and seeds with a CLAUDE.md. A configured directory is
-	// created but left empty: it may be the user's own.
-	Dir string `toml:"dir"`
-	// Notify queues a short note to the orchestrator whenever a worktree agent
-	// finishes a turn or stops to ask for input, so it can follow progress
-	// without polling. The note is delivered as a message when the
-	// orchestrator is idle.
-	Notify bool `toml:"notify"`
+	// Model is the claude model the orchestrator runs on, passed as --model.
+	// It coordinates rather than codes, so a cheaper model is the default.
+	Model string `toml:"model"`
 }
 
 const (
@@ -203,7 +196,7 @@ type Keys struct {
 	Help string `toml:"help"`
 	// GlobalConfig opens the home-directory workspace for editing global config.
 	GlobalConfig string `toml:"global_config"`
-	// Orchestrator opens the orchestrator workspace: the agent that manages
+	// Orchestrator opens the orchestrator agent: the agent that manages
 	// work across every open worktree.
 	Orchestrator string `toml:"orchestrator"`
 	// Attention jumps straight into the session of the agent that most needs the
@@ -273,7 +266,7 @@ func Default() Config {
 		},
 		Usage:        Usage{Threshold: 50},
 		Display:      Display{Icons: IconsNerd, AgentStrip: true},
-		Orchestrator: Orchestrator{Notify: true},
+		Orchestrator: Orchestrator{Model: "sonnet"},
 		Plasma: Plasma{
 			Pattern: "classic", Palette: "aurora", Charset: "dots",
 			Speed: 0.3, Width: 40,

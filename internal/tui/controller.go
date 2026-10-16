@@ -281,6 +281,9 @@ func (c *Controller) EnsureDirTrusted(dir string) error {
 	return nil
 }
 
+// RestoreSessions reports whether startup reopens last run's workspaces.
+func (c *Controller) RestoreSessions() bool { return c.cfg.RestoreSessions }
+
 // OrchestratorNotesDir is where the orchestrator for repoName keeps its
 // notes: "orchestrator/<repo>" next to the config file, outside the repo.
 func (c *Controller) OrchestratorNotesDir(repoName string) (string, error) {

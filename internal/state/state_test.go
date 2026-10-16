@@ -138,3 +138,16 @@ func TestDrainQueue(t *testing.T) {
 		t.Fatal("drain should remove the key")
 	}
 }
+
+func TestOpenSetRoundTrips(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	s := Load()
+	s.SetOpen([]string{"r/a", "r/b"})
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	s = Load()
+	if len(s.Open) != 2 || s.Open[0] != "r/a" || s.Open[1] != "r/b" {
+		t.Fatalf("open = %v", s.Open)
+	}
+}

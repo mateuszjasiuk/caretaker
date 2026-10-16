@@ -3,6 +3,7 @@ package session
 import (
 	"errors"
 	"io"
+	"sort"
 	"sync"
 	"time"
 
@@ -602,6 +603,18 @@ func (m *Manager) ZoomTermPane(key string) {
 		return
 	}
 	ws.TermZoomed = !ws.TermZoomed
+}
+
+// Keys lists the open workspaces, sorted.
+func (m *Manager) Keys() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	keys := make([]string, 0, len(m.spaces))
+	for k := range m.spaces {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // Close terminates and forgets a workspace's sessions.

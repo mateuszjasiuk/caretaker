@@ -22,6 +22,9 @@ type State struct {
 	// Queues holds messages waiting for a workspace's agent to go idle, so a
 	// note queued just before ct exits is still delivered on the next run.
 	Queues map[string][]string `json:"queues,omitempty"` // "repo/worktree" -> pending messages
+	// Open lists the workspaces that were open at the last save, so a start
+	// with restore_sessions on can reopen them.
+	Open []string `json:"open,omitempty"`
 
 	// Snapshot/Write bookkeeping: seq numbers snapshots as they're taken,
 	// written tracks the newest one flushed, and writeMu serialises flushes so
@@ -151,6 +154,9 @@ func (s *State) Dequeue(key string) (text string, ok bool) {
 
 // ClearQueue drops every pending message for key.
 func (s *State) ClearQueue(key string) { delete(s.Queues, key) }
+
+// SetOpen records which workspaces are open right now.
+func (s *State) SetOpen(keys []string) { s.Open = append([]string(nil), keys...) }
 
 // Drain removes and returns every pending message for key, in order.
 func (s *State) Drain(key string) []string {

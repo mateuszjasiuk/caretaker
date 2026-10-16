@@ -234,3 +234,21 @@ func TestOrchestratorAgentSpecCarriesRoleModelAndNotes(t *testing.T) {
 		t.Fatal("repoOfKey")
 	}
 }
+
+func TestRestoreTargetsResolvesSavedOpenWorkspaces(t *testing.T) {
+	m := ctlModel(t)
+	m.state.SetOpen([]string{"r/a", "r/gone", "~/config", "r/(main)"})
+	if _, err := m.mgr.Activate("r/a", t.TempDir(), nil, 80, 24); err != nil {
+		t.Fatal(err)
+	}
+	got := m.restoreTargets()
+	want := [][2]string{{"~/config", ""}, {"r/(main)", "/r"}}
+	if len(got) != len(want) {
+		t.Fatalf("targets = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("targets[%d] = %v, want %v", i, got[i], want[i])
+		}
+	}
+}

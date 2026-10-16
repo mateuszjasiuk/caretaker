@@ -3618,22 +3618,33 @@ func TestCreatingSpinnerTimerSelfDisarms(t *testing.T) {
 	}
 }
 
-func TestOrchestratorIconLightsOnlyForItsAgent(t *testing.T) {
-	plain := &session.Session{}
-	orch := &session.Session{Role: orchestratorRole}
-	ws := &session.Workspace{Agents: []*session.Session{plain, orch}}
+func TestOrchestratorViewLeavesWorkspaceCurrent(t *testing.T) {
 	m := sampleModel()
-	m.current = &workspaceRef{repo: "r", worktree: "(main)", key: "r/(main)", ws: ws}
-	m.screen = screenAgent
-	if m.onOrchestrator() {
-		t.Fatal("a plain agent should not light the orchestrator icon")
-	}
-	ws.ActiveAgent = 1
+	m.current = &workspaceRef{repo: "r", worktree: "w", key: "r/w"}
+	m.orchFrom = screenTerminal
+	m.screen = screenOrchestrator
 	if !m.onOrchestrator() {
-		t.Fatal("the orchestrator agent on screen should light the icon")
+		t.Fatal("the icon should light on the orchestrator view")
 	}
-	m.screen = screenEditor
-	if m.onOrchestrator() {
-		t.Fatal("the icon lights only on the agent view")
+	// The jump keys act on the workspace underneath.
+	mm, _ := m.gotoScreen(screenAgent)
+	if got := mm.(Model); got.screen != screenAgent || got.current.key != "r/w" {
+		t.Fatalf("goto agent went to %v on %q", got.screen, got.current.key)
+	}
+	// The orchestrator key toggles back to the view it was opened from.
+	mm, _ = m.openOrchestrator()
+	if got := mm.(Model).screen; got != screenTerminal {
+		t.Fatalf("toggle went to %v, want the terminal it came from", got)
+	}
+	m.current = nil
+	mm, _ = m.openOrchestrator()
+	if got := mm.(Model).screen; got != screenPicker {
+		t.Fatalf("toggle with no workspace went to %v, want the deck", got)
+	}
+	// The view is never remembered as a workspace's last screen.
+	m.current = &workspaceRef{repo: "r", worktree: "w", key: "r/w"}
+	mm, _ = m.returnToDeck()
+	if s, ok := mm.(Model).lastScreens["r/w"]; ok && s == screenOrchestrator {
+		t.Fatal("returnToDeck remembered the orchestrator view")
 	}
 }

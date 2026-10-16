@@ -198,10 +198,13 @@ board or the bar's agent strip; the orchestrator icon stands for it. It resumes
 its conversation across runs.
 
 Press `alt+o`, click the orchestrator icon in the bar's tab row (between the
-agent and terminal icons), or pick "open orchestrator" in the command palette to go to it. The icon
-is always there and lights up while the orchestrator is on screen. ct opens
-the main checkout of the current repo (or the repo selected on the
-deck) and focuses the orchestrator agent, starting one the first time. Nothing
+agent and terminal icons), or pick "open orchestrator" in the command palette
+to show it. The icon is always there and lights up while the orchestrator view
+is showing. The view lays over your current worktree, which stays current: the
+jump and cycle keys lead back to its editor, agent, and terminal, and `alt+o`
+again returns to the view you came from. Behind the scenes ct opens the main
+checkout of the current repo (or the repo selected on the deck) in the
+background and starts the orchestrator agent there the first time. Nothing
 pushes events into it: you talk to it when you want coordination, such as
 spawning worktrees for a batch of tasks, briefing an agent, or getting an
 overview of what is running.

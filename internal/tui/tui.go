@@ -46,9 +46,9 @@ const (
 	screenAgent
 	screenTerminal
 	screenSetup
-	// screenOrchestrator is not a view. It is the bar icon that opens the
-	// orchestrator agent (see openOrchestrator); the bar lights it while that
-	// agent is on screen.
+	// screenOrchestrator shows the orchestrator agent over the current
+	// workspace, which stays current underneath: the jump and cycle keys lead
+	// back to it. The agent itself lives in the repo's main checkout.
 	screenOrchestrator
 )
 
@@ -431,6 +431,10 @@ type Model struct {
 	// home workspace path/key, cached on first open for pathToKey lookups
 	homeWSPath string
 	homeWSKey  string
+	// orchKey is the main-checkout workspace whose orchestrator the
+	// orchestrator view shows; orchFrom is the view it was opened from.
+	orchKey  string
+	orchFrom screen
 	// orchestrator workspace path/key, set on first open like the home ones
 
 	// ctlSrv is the control socket `ct ctl` talks to; nil in tests. queueSent
@@ -1080,6 +1084,9 @@ func (m Model) scrollTermPaneWheel(s *session.Session, up bool) bool {
 }
 
 func (m Model) activeSession() *session.Session {
+	if m.screen == screenOrchestrator {
+		return m.orchestratorSession()
+	}
 	if m.current == nil || m.current.ws == nil {
 		return nil
 	}
@@ -1149,6 +1156,12 @@ func (m Model) visibleSessions() []*session.Session {
 	if m.helpOpen || m.boardOpen || m.usageOpen || m.paletteOpen || m.diffOpen || m.stackOpen || m.screen == screenPicker || m.screen == screenSetup {
 		return nil
 	}
+	if m.screen == screenOrchestrator {
+		if s := m.orchestratorSession(); s != nil {
+			return []*session.Session{s}
+		}
+		return nil
+	}
 	if m.current == nil || m.current.ws == nil {
 		return nil
 	}
@@ -1189,6 +1202,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.current != nil {
 			w, h := m.sessionSize()
 			m.mgr.ResizeWorkspace(m.current.key, w, h)
+		}
+		if m.screen == screenOrchestrator && m.orchKey != "" {
+			w, h := m.sessionSize()
+			m.mgr.ResizeWorkspace(m.orchKey, w, h)
 		}
 		return m, nil
 
@@ -1715,6 +1732,10 @@ func (m Model) handlePaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 // watchingAgent reports whether the user is on the agent screen with the agent
 // running as pid focused.
 func (m Model) watchingAgent(pid int) bool {
+	if m.screen == screenOrchestrator {
+		s := m.orchestratorSession()
+		return s != nil && s.Pid() == pid
+	}
 	return m.screen == screenAgent && m.current != nil && m.current.ws != nil &&
 		m.current.ws.ActiveAgentSession() != nil &&
 		m.current.ws.ActiveAgentSession().Pid() == pid
@@ -2867,7 +2888,7 @@ func (m Model) activateWithoutHistory(repoName, wtName, dir string) (tea.Model, 
 	if saved := m.savedActiveAgent(key); saved < len(ws.Agents) {
 		ws.ActiveAgent = saved
 	}
-	if m.current != nil && m.screen != screenPicker {
+	if m.current != nil && m.screen != screenPicker && m.screen != screenOrchestrator {
 		if m.lastScreens == nil {
 			m.lastScreens = map[string]screen{}
 		}
@@ -3311,15 +3332,16 @@ func (m Model) handleSessionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
-	case m.keys.Cycle:
-		m.screen = m.screen.next()
-		if m.screen == screenAgent && m.current != nil {
-			m.clearWorkspaceAttention()
+	case m.keys.Cycle, m.keys.CycleBack:
+		if m.current == nil {
+			return m, nil // on the orchestrator view with no workspace to cycle into
 		}
-		return m, nil
-	case m.keys.CycleBack:
-		m.screen = m.screen.prev()
-		if m.screen == screenAgent && m.current != nil {
+		if msg.String() == m.keys.Cycle {
+			m.screen = m.screen.next()
+		} else {
+			m.screen = m.screen.prev()
+		}
+		if m.screen == screenAgent {
 			m.clearWorkspaceAttention()
 		}
 		return m, nil
@@ -3383,7 +3405,7 @@ func (m Model) handleSessionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // this is the moment they're re-read. Shared by handleSessionKey's picker branch
 // and the command palette's "back to deck" row.
 func (m Model) returnToDeck() (tea.Model, tea.Cmd) {
-	if m.current != nil {
+	if m.current != nil && m.screen != screenOrchestrator {
 		if m.lastScreens == nil {
 			m.lastScreens = map[string]screen{}
 		}
@@ -3450,7 +3472,17 @@ func (m Model) rotateAgent(delta int) (tea.Model, tea.Cmd) {
 	if n == 0 {
 		return m, nil
 	}
-	m.current.ws.ActiveAgent = ((m.current.ws.ActiveAgent+delta)%n + n) % n
+	ws := m.current.ws
+	next := ws.ActiveAgent
+	for range n {
+		next = ((next+delta)%n + n) % n
+		// The orchestrator has its own view; rotation skips it unless it is
+		// the only agent.
+		if ws.Agents[next].Role != orchestratorRole || n == 1 {
+			break
+		}
+	}
+	ws.ActiveAgent = next
 	m.screen = screenAgent
 	m.clearWorkspaceAttention()
 	return m, m.saveAgents(m.current.key)

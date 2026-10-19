@@ -14,6 +14,8 @@ const (
 	OpSend      Op = "send"
 	OpInterrupt Op = "interrupt"
 	OpStop      Op = "stop"
+	OpOpen      Op = "open"
+	OpReopen    Op = "reopen"
 	OpRemove    Op = "remove"
 )
 
@@ -34,7 +36,7 @@ type Request struct {
 	Text string `json:"text,omitempty"`
 	// Lines caps how many commits a summary lists (0 = default).
 	Lines int `json:"lines,omitempty"`
-	// Force lets stop close a workspace whose agent is still busy.
+	// Force lets stop and reopen close a workspace whose agent is still busy.
 	Force bool `json:"force,omitempty"`
 }
 

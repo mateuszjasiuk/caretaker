@@ -86,6 +86,10 @@ func (m Model) handleCtl(p *ctl.Pending) (tea.Model, tea.Cmd) {
 		mm, cmd = m.ctlInterrupt(p)
 	case ctl.OpStop:
 		mm, cmd = m.ctlStop(p)
+	case ctl.OpOpen:
+		mm, cmd = m.ctlOpen(p)
+	case ctl.OpReopen:
+		mm, cmd = m.ctlReopen(p)
 	case ctl.OpRemove:
 		mm, cmd = m.ctlRemove(p)
 	default:
@@ -529,6 +533,68 @@ func (m Model) ctlStop(p *ctl.Pending) (tea.Model, tea.Cmd) {
 	}
 	p.Reply(ctl.Response{OK: true, Message: "stopped " + key + " (worktree and branch kept)"})
 	return m, tea.Batch(m.loadCmd(), m.writeStateCmd(), m.flashCmd("orchestrator stopped "+key))
+}
+
+// ctlOpen starts a closed worktree's sessions in the background from its
+// saved pool, so its agents resume their conversations. The user's view does
+// not move. An open worktree is left as it is.
+func (m Model) ctlOpen(p *ctl.Pending) (tea.Model, tea.Cmd) {
+	key := p.Req.Worktree
+	dir, err := m.ctlTarget(key)
+	if err != nil {
+		p.Fail(err)
+		return m, nil
+	}
+	if m.mgr.Has(key) {
+		p.Reply(ctl.Response{OK: true, Message: key + " is already open"})
+		return m, nil
+	}
+	m, cmd, err := m.openWorkspaceBackground(key, dir, true)
+	if err != nil {
+		p.Fail(err)
+		return m, nil
+	}
+	p.Reply(ctl.Response{OK: true, Message: "opened " + key})
+	return m, tea.Batch(cmd, m.loadCmd(), m.flashCmd("orchestrator opened "+key))
+}
+
+// ctlReopen stops a worktree and opens it again: its agents restart on the
+// same conversations. Like stop, it refuses while an agent is busy unless
+// forced. When it is the worktree on screen, the view stays on it.
+func (m Model) ctlReopen(p *ctl.Pending) (tea.Model, tea.Cmd) {
+	key := p.Req.Worktree
+	dir, err := m.ctlTarget(key)
+	if err != nil {
+		p.Fail(err)
+		return m, nil
+	}
+	if !m.mgr.Has(key) {
+		return m.ctlOpen(p)
+	}
+	if n := m.busyHostedAgents(key); n > 0 && !p.Req.Force {
+		p.Fail(fmt.Errorf("%s has %d busy agent(s); interrupt first, or reopen with --force", key, n))
+		return m, nil
+	}
+	var onScreen *workspaceRef
+	view := m.screen
+	if m.current != nil && m.current.key == key {
+		ref := *m.current
+		onScreen = &ref
+	}
+	m.stopWorkspace(key)
+	m, cmd, err := m.openWorkspaceBackground(key, dir, true)
+	if err != nil {
+		p.Fail(err)
+		return m, m.loadCmd()
+	}
+	if onScreen != nil {
+		mm, activate := m.activateWithoutHistory(onScreen.repo, onScreen.worktree, onScreen.path)
+		m = mm.(Model)
+		m.screen = view
+		cmd = tea.Batch(cmd, activate)
+	}
+	p.Reply(ctl.Response{OK: true, Message: "reopened " + key})
+	return m, tea.Batch(cmd, m.loadCmd(), m.flashCmd("orchestrator reopened "+key))
 }
 
 // ctlRemove never deletes on its own: it parks the request and raises ct's

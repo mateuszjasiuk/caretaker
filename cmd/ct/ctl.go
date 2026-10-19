@@ -22,6 +22,8 @@ Talk to the running ct. Worktrees are named "repo/name".
   send <repo/name> [TEXT | -]           message the worktree's agent (queued until it is idle)
   interrupt <repo/name>                 press Escape in the worktree's agent
   stop <repo/name> [--force]            close the worktree's sessions (keeps the worktree)
+  open <repo/name>                      start a closed worktree's sessions, resuming its agents
+  reopen <repo/name> [--force]          stop and open again (restarts its agents on the same conversations)
   remove <repo/name>                    ask the user to confirm removing the worktree
 
 "-" reads the text from stdin. Set CT_SOCKET to choose between several running ct instances.`
@@ -154,7 +156,7 @@ func parseCtlArgs(args []string) (req ctl.Request, asJSON bool, err error) {
 		if strings.TrimSpace(req.Text) == "" {
 			return req, false, fmt.Errorf("send needs text (as arguments, or - for stdin)")
 		}
-	case "interrupt", "stop", "remove":
+	case "interrupt", "stop", "remove", "open", "reopen":
 		req.Op = ctl.Op(cmd)
 		if len(positional) != 1 {
 			return req, false, fmt.Errorf("%s takes one worktree", cmd)

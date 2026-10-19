@@ -23,6 +23,8 @@ func TestParseCtlArgs(t *testing.T) {
 		{args: []string{"send", "r/a", "run", "the", "tests"}, want: ctl.Request{Op: ctl.OpSend, Worktree: "r/a", Text: "run the tests"}},
 		{args: []string{"send", "r/a"}, wantErr: true},
 		{args: []string{"stop", "r/a", "--force"}, want: ctl.Request{Op: ctl.OpStop, Worktree: "r/a", Force: true}},
+		{args: []string{"open", "r/a"}, want: ctl.Request{Op: ctl.OpOpen, Worktree: "r/a"}},
+		{args: []string{"reopen", "r/a", "--force"}, want: ctl.Request{Op: ctl.OpReopen, Worktree: "r/a", Force: true}},
 		{args: []string{"interrupt", "r/a"}, want: ctl.Request{Op: ctl.OpInterrupt, Worktree: "r/a"}},
 		{args: []string{"remove", "r/a"}, want: ctl.Request{Op: ctl.OpRemove, Worktree: "r/a"}},
 		{args: []string{"remove", "r/a", "r/b"}, wantErr: true},

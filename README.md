@@ -229,6 +229,8 @@ ct ctl spawn caretaker fix-login --prompt "Fix the redirect loop after login"
 ct ctl send caretaker/fix-login "Add a test for the expired-token case"
 ct ctl interrupt caretaker/fix-login       # press Escape in that agent
 ct ctl stop caretaker/fix-login            # close its sessions, keep the worktree
+ct ctl open caretaker/fix-login            # start them again, resuming its agents
+ct ctl reopen caretaker/fix-login          # stop and open: restart its agents on the same conversations
 ct ctl remove caretaker/fix-login          # asks you to confirm in the deck
 ```
 

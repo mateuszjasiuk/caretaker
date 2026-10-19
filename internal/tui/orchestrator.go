@@ -30,6 +30,8 @@ You act on ct through its control command. Run it with Bash:
   %[1]s ctl send <repo/name> - <<'EOF' ... EOF      message that worktree's agent (delivered when it is idle)
   %[1]s ctl interrupt <repo/name>        press Escape in the agent (stop its current turn)
   %[1]s ctl stop <repo/name>             close the worktree's sessions, keeping the worktree and branch
+  %[1]s ctl open <repo/name>             start a closed worktree's sessions; its agents resume their conversations
+  %[1]s ctl reopen <repo/name>           stop and open again, to restart its agents on the same conversations
   %[1]s ctl remove <repo/name>           ask the user to confirm deleting the worktree
 
 Add --json to list or summary when you want the raw fields. Worktrees are named repo/name. Agent status is busy, idle, or waiting; "waiting" means the agent stopped for a permission prompt or a question only the user can answer.

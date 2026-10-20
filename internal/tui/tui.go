@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -447,6 +448,9 @@ type Model struct {
 	// set while the real terminal window does not have focus.
 	focused     *session.Session
 	termBlurred bool
+	// focusDir is the folder focus_command was last run for; it is cleared
+	// whenever no session has focus, so regaining focus runs it again.
+	focusDir string
 	// graphicsOut carries kitty image commands from sessions to the terminal.
 	graphicsOut  chan []byte
 	queueSent    map[string]time.Time
@@ -1157,6 +1161,45 @@ func (m *Model) syncFocus() {
 		target.SetFocused(true)
 	}
 	m.focused = target
+	dir := ""
+	if target != nil {
+		dir = m.screenDir()
+	}
+	if dir != m.focusDir {
+		m.focusDir = dir
+		if dir != "" && m.ctrl != nil {
+			runFocusCommand(m.ctrl.FocusCommand(), dir)
+		}
+	}
+}
+
+// screenDir is the folder of the session on screen: the current worktree's,
+// or the main checkout's for the orchestrator.
+func (m Model) screenDir() string {
+	if m.screen == screenOrchestrator {
+		dir, _ := m.worktreePath(m.orchKey)
+		return dir
+	}
+	if m.current == nil {
+		return ""
+	}
+	return m.current.path
+}
+
+// runFocusCommand starts focus_command for dir in the background and does not
+// wait for it. A missing program or a failure is ignored: it only informs
+// other tools, such as a voice reader, which folder is in use.
+func runFocusCommand(argv []string, dir string) {
+	if len(argv) == 0 {
+		return
+	}
+	if _, err := exec.LookPath(argv[0]); err != nil {
+		return
+	}
+	cmd := exec.Command(argv[0], append(argv[1:], dir)...)
+	if cmd.Start() == nil {
+		go cmd.Wait() //nolint:errcheck // reap it; the result does not matter
+	}
 }
 
 // plasmaShown reports whether the plasma panel is being drawn right now:

@@ -284,6 +284,10 @@ func (c *Controller) EnsureDirTrusted(dir string) error {
 // RestoreSessions reports whether startup reopens last run's workspaces.
 func (c *Controller) RestoreSessions() bool { return c.cfg.RestoreSessions }
 
+// FocusCommand is the command run when a session's folder gains focus, split
+// into words; nil when unset.
+func (c *Controller) FocusCommand() []string { return strings.Fields(c.cfg.FocusCommand) }
+
 // OrchestratorNotesDir is where the orchestrator for repoName keeps its
 // notes: "orchestrator/<repo>" next to the config file, outside the repo.
 func (c *Controller) OrchestratorNotesDir(repoName string) (string, error) {

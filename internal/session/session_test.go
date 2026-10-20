@@ -949,3 +949,15 @@ func TestAltScreenPaneDoesNotScroll(t *testing.T) {
 		t.Error("an alt-screen pane must stay on the live screen")
 	}
 }
+
+func TestStartSpecSetsPWDToTheSessionDir(t *testing.T) {
+	t.Setenv("PWD", "/somewhere/else")
+	dir := t.TempDir()
+	// env prints the environment as given; a shell would recompute PWD itself.
+	s, err := StartSpec(Spec{Kind: Terminal, Argv: []string{"env"}}, dir, 400, 60, func(*Session) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	waitFor(t, s, "PWD="+dir)
+}

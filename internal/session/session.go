@@ -169,6 +169,11 @@ func StartSpec(spec Spec, dir string, w, h int, dirty func(*Session)) (*Session,
 	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...)
 	cmd.Dir = dir
 	cmd.Env = buildEnv(spec.Env, spec.UnsetEnv)
+	if dir != "" {
+		// PWD would otherwise name the folder ct was started in, and programs
+		// that trust it (ranger, shells) would start there, not in the worktree.
+		cmd.Env = upsertEnv(cmd.Env, "PWD="+dir)
+	}
 
 	w, h = max(w, 1), max(h, 1)
 	f, err := pty.StartWithSize(cmd, winsize(w, h))

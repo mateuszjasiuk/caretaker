@@ -76,6 +76,11 @@ branch_name   = "{name}"
 # background while the deck is shown.
 restore_sessions = false
 
+# Run a command in the background whenever a session's folder gains focus
+# (switching to it, or ct's window getting focus back). The folder is added as
+# the last argument. Empty is off.
+focus_command = ""
+
 # Both providers are enabled by default, with Claude initially selected, so
 # this whole section may be omitted. `default` must also appear in `enabled`.
 [agents]

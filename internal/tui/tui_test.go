@@ -3679,3 +3679,37 @@ func TestSyncFocusFollowsTheSessionOnScreen(t *testing.T) {
 		t.Fatal("the deck holds no session focus")
 	}
 }
+
+func TestFocusCommandRunsOncePerFolderGain(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "focus.log")
+	script := filepath.Join(t.TempDir(), "focus.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho \"$1\" >> "+log+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := sampleModel()
+	m.ctrl = NewController(config.Config{FocusCommand: script})
+	ws := &session.Workspace{Editor: &session.Session{}, Agents: []*session.Session{{}}}
+	m.current = &workspaceRef{repo: "r", worktree: "w", key: "r/w", path: "/r/w", ws: ws}
+
+	m.screen = screenEditor
+	m.syncFocus() // runs: /r/w gains focus
+	m.screen = screenAgent
+	m.syncFocus() // same folder: no run
+	m.termBlurred = true
+	m.syncFocus()
+	m.termBlurred = false
+	m.syncFocus() // the window is back: runs again
+
+	want := "/r/w\n/r/w\n"
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		got, _ := os.ReadFile(log)
+		if string(got) == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("focus command log = %q, want %q", got, want)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

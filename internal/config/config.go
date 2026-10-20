@@ -39,6 +39,10 @@ type Config struct {
 	// RestoreSessions reopens, at startup, the workspaces that were open when
 	// ct last quit. They start in the background; the deck is shown as usual.
 	RestoreSessions bool `toml:"restore_sessions"`
+	// FocusCommand runs, in the background, whenever a session's folder gains
+	// focus: on switching to it, or when ct's window gets focus back. The
+	// folder is added as the last argument. Empty means off.
+	FocusCommand string `toml:"focus_command"`
 	// Keys configures the reserved navigation keystrokes.
 	Keys Keys `toml:"keys"`
 	// Usage configures the plan usage-limit gauge.

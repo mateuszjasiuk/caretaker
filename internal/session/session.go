@@ -170,7 +170,7 @@ func StartSpec(spec Spec, dir string, w, h int, dirty func(*Session)) (*Session,
 	cmd.Env = buildEnv(spec.Env, spec.UnsetEnv)
 
 	w, h = max(w, 1), max(h, 1)
-	f, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: uint16(h), Cols: uint16(w)})
+	f, err := pty.StartWithSize(cmd, winsize(w, h))
 	if err != nil {
 		if spec.Companion != nil {
 			_ = spec.Companion.Close()
@@ -196,6 +196,7 @@ func StartSpec(spec Spec, dir string, w, h int, dirty func(*Session)) (*Session,
 	s.emu.SetCallbacks(vt.Callbacks{
 		CursorVisibility: func(v bool) { s.cursorVisible.Store(v) },
 	})
+	installGraphics(s.emu, s.emu.InputPipe())
 
 	go s.pumpOutput()    // pty → emulator (screen)
 	go io.Copy(f, s.emu) //nolint:errcheck // emulator(SendKey) → pty (input)
@@ -396,7 +397,7 @@ func (s *Session) Resize(w, h int) {
 	// rather than show an arbitrary window of history.
 	s.setScrollOff(0)
 	s.renderCacheDirty.Store(true) // resize reshapes the buffer; drop the cache
-	_ = pty.Setsize(s.pty, &pty.Winsize{Rows: uint16(h), Cols: uint16(w)})
+	_ = pty.Setsize(s.pty, winsize(w, h))
 }
 
 // scrollForShrink keeps the newest output visible when the pane loses rows

@@ -99,6 +99,7 @@ func (m Model) View() tea.View {
 	w, h := m.width, m.height
 	if w < minViableWidth || h < minViableHeight {
 		v := tea.NewView("ct — please enlarge the terminal")
+		v.ReportFocus = true
 		v.AltScreen = true
 		return v
 	}
@@ -144,6 +145,7 @@ func (m Model) View() tea.View {
 	v.AltScreen = true
 	v.Cursor = cursor
 	v.MouseMode = tea.MouseModeCellMotion
+	v.ReportFocus = true // so sessions hear when the window loses focus (syncFocus)
 	return v
 }
 

@@ -258,10 +258,11 @@ func upsertEnv(env []string, entry string) []string {
 // the pty closes (child exited or session closed), it reaps the process.
 func (s *Session) pumpOutput() {
 	buf := make([]byte, 32*1024)
+	var guard stringGuard
 	for {
 		n, err := s.pty.Read(buf)
 		if n > 0 {
-			_, _ = s.emu.Write(buf[:n])
+			_, _ = s.emu.Write(guard.filter(buf[:n]))
 			// Mark the cache stale BEFORE signalling the repaint, so the frame
 			// this write triggers never serves the pre-write screen.
 			s.renderCacheDirty.Store(true)

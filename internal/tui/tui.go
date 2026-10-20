@@ -442,7 +442,9 @@ type Model struct {
 	// queue waits for that turn to start before sending the next (see
 	// deliverQueued). ctlRemoveKey parks a remove request from the socket
 	// until the deck can show the confirm panel for it.
-	ctlSrv       *ctl.Server
+	ctlSrv *ctl.Server
+	// graphicsOut carries kitty image commands from sessions to the terminal.
+	graphicsOut  chan []byte
 	queueSent    map[string]time.Time
 	ctlRemoveKey string
 
@@ -831,7 +833,7 @@ func (m Model) Init() tea.Cmd {
 	if m.screen == screenSetup {
 		return tea.Batch(textinput.Blink, m.repaintCmd())
 	}
-	cmds := []tea.Cmd{m.loadCmd(), textinput.Blink, m.repaintCmd(), m.watchCtl()}
+	cmds := []tea.Cmd{m.loadCmd(), textinput.Blink, m.repaintCmd(), m.watchCtl(), tea.RequestTerminalVersion}
 	if m.claudeEnabled() {
 		cmds = append(cmds, m.pollStatusCmd())
 	}
@@ -1188,6 +1190,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		measureCells() // before the sessions are resized, so they get the new pixel size
 		// The deck inputs live in the left column, which the plasma panel
 		// narrows; size them to that column or they'd overflow the box border.
 		inputW := max(10, m.width-m.plasmaWidth()-12)
@@ -1244,6 +1247,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ctlRequestMsg:
 		return m.handleCtl(msg.p)
+
+	case tea.TerminalVersionMsg:
+		return m, m.enableGraphics(msg.Name)
+
+	case graphicsMsg:
+		// Sequence keeps the chunks in order: the next batch is read only
+		// after this one is written.
+		return m, tea.Sequence(tea.Raw(string(msg)), m.watchGraphics())
 
 	case ctlSpawnedMsg:
 		return m.handleCtlSpawned(msg)

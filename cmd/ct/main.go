@@ -882,7 +882,7 @@ func run() error {
 	}
 
 	ctrl := tui.NewController(cfg)
-	m := tui.New(ctrl, mgr).WithCtl(srv)
+	m := tui.New(ctrl, mgr).WithCtl(srv).WithGraphics()
 	if needsSetup {
 		m = m.EnterSetup(configPath)
 	}

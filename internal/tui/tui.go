@@ -443,6 +443,10 @@ type Model struct {
 	// deliverQueued). ctlRemoveKey parks a remove request from the socket
 	// until the deck can show the confirm panel for it.
 	ctlSrv *ctl.Server
+	// focused is the session that was last told it has focus; termBlurred is
+	// set while the real terminal window does not have focus.
+	focused     *session.Session
+	termBlurred bool
 	// graphicsOut carries kitty image commands from sessions to the terminal.
 	graphicsOut  chan []byte
 	queueSent    map[string]time.Time
@@ -1112,6 +1116,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	mm, cmd := m.update(msg)
 	if model, ok := mm.(Model); ok {
 		model.syncVisible()
+		model.syncFocus()
 		// Arm the plasma tick whenever the deck panel (re)appears; the tick
 		// disarms itself when it fires off-deck, keeping at most one pending.
 		if !model.plasmaTicking && model.plasmaShown() && model.plasma.Animated() {
@@ -1128,6 +1133,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return model, cmd
 	}
 	return mm, cmd
+}
+
+// syncFocus tells sessions about focus changes: the session on screen has
+// focus while the real terminal window does, and loses it when the user
+// switches away, to another session or out of the window. Only programs that
+// turned on focus reporting hear about it (Session.SetFocused).
+func (m *Model) syncFocus() {
+	var target *session.Session
+	switch m.screen {
+	case screenEditor, screenAgent, screenTerminal, screenOrchestrator:
+		if !m.termBlurred {
+			target = m.activeSession()
+		}
+	}
+	if target == m.focused {
+		return
+	}
+	if m.focused != nil {
+		m.focused.SetFocused(false)
+	}
+	if target != nil {
+		target.SetFocused(true)
+	}
+	m.focused = target
 }
 
 // plasmaShown reports whether the plasma panel is being drawn right now:
@@ -1247,6 +1276,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ctlRequestMsg:
 		return m.handleCtl(msg.p)
+
+	case tea.FocusMsg:
+		m.termBlurred = false
+		return m, nil
+
+	case tea.BlurMsg:
+		m.termBlurred = true
+		return m, nil
 
 	case tea.TerminalVersionMsg:
 		return m, m.enableGraphics(msg.Name)

@@ -52,6 +52,7 @@ type Session struct {
 	emu *vt.SafeEmulator
 
 	cursorVisible atomic.Bool
+	reportFocus   atomic.Bool // the program turned on focus reporting (mode 1004)
 	closed        atomic.Bool
 	closeOnce     sync.Once
 	companionOnce sync.Once
@@ -197,6 +198,7 @@ func StartSpec(spec Spec, dir string, w, h int, dirty func(*Session)) (*Session,
 		CursorVisibility: func(v bool) { s.cursorVisible.Store(v) },
 	})
 	installGraphics(s.emu, s.emu.InputPipe())
+	s.installFocus(s.emu)
 
 	go s.pumpOutput()    // pty → emulator (screen)
 	go io.Copy(f, s.emu) //nolint:errcheck // emulator(SendKey) → pty (input)

@@ -3645,3 +3645,37 @@ func TestOrchestratorViewLeavesWorkspaceCurrent(t *testing.T) {
 		t.Fatal("returnToDeck remembered the orchestrator view")
 	}
 }
+
+func TestSyncFocusFollowsTheSessionOnScreen(t *testing.T) {
+	ed, ag := &session.Session{}, &session.Session{}
+	m := sampleModel()
+	m.current = &workspaceRef{repo: "r", worktree: "w", key: "r/w", ws: &session.Workspace{Editor: ed, Agents: []*session.Session{ag}}}
+
+	m.screen = screenEditor
+	m.syncFocus()
+	if m.focused != ed {
+		t.Fatal("the editor on screen should have focus")
+	}
+	m.screen = screenAgent
+	m.syncFocus()
+	if m.focused != ag {
+		t.Fatal("switching views should move focus to the agent")
+	}
+	mm, _ := m.update(tea.BlurMsg{})
+	m = mm.(Model)
+	m.syncFocus()
+	if m.focused != nil {
+		t.Fatal("the window losing focus should take it from the session")
+	}
+	mm, _ = m.update(tea.FocusMsg{})
+	m = mm.(Model)
+	m.syncFocus()
+	if m.focused != ag {
+		t.Fatal("the window regaining focus should give it back")
+	}
+	m.screen = screenPicker
+	m.syncFocus()
+	if m.focused != nil {
+		t.Fatal("the deck holds no session focus")
+	}
+}

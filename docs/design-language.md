@@ -196,7 +196,7 @@ Ask only for information the system cannot infer. Start focus on the field most 
 
 ### Agent strip
 
-After the bar icons, a faint `│` and then every open worktree, separated by `·`. The order is fixed (repos in deck order, worktrees by name) so items never move; only colour and glyph change: yellow working, green `✓` done, red `!` waiting, white seen but not answered, dim idle, underline for the current worktree. Names shorten before items drop, and dropped items show as `+N`. The strip uses only space the right-side facts leave free.
+After the bar icons, a faint `│` and then every open worktree, separated by `·`. The order is fixed (repos in deck order, worktrees by name) so items never move; only colour and glyph change: yellow working, green `✓` done, red `!` waiting, white seen but not answered, dim idle, underline for the current worktree. With more than one repo open, each repo's worktrees follow its faint name and repos are divided by a faint `│`. Repo names go first when space is short, then names shorten before items drop, and dropped items show as `+N`. The strip uses only space the right-side facts leave free.
 
 ### Notifications and attention
 

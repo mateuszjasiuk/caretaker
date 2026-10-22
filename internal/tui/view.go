@@ -2309,9 +2309,10 @@ var stripSep = "   " + barSep.Render("│") + "  "
 // agentStripLayout lays the agent strip out in the bar's first row, between the
 // icons and the right-side facts: each open worktree's name, coloured by its
 // agents (yellow working, green ✓ done, red ! waiting, white seen but not
-// answered, dim idle), with the
-// current worktree underlined. Names shorten before items are dropped, and
-// dropped items show as "+N". Returns "" when the strip is off or doesn't fit.
+// answered, dim idle), with the current worktree underlined. With more than
+// one repo open, each repo's worktrees follow its name. Repo names go first
+// when space is short, then names shorten, then items are dropped and show as
+// "+N". Returns "" when the strip is off or doesn't fit.
 func (m Model) agentStripLayout() (string, []stripItem) {
 	if !m.agentStrip {
 		return "", nil
@@ -2326,22 +2327,30 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 		return "", nil
 	}
 
-	// A worktree name shared by two repos needs its repo to tell them apart.
+	// Repo names only help when the strip spans more than one repo.
+	repos := map[string]bool{}
+	for _, g := range groups {
+		if g.key != m.homeWSKey {
+			repos[g.repo] = true
+		}
+	}
+	// A worktree name shared by two repos needs its repo to tell them apart,
+	// unless the repo name is already shown.
 	count := map[string]int{}
 	for _, g := range groups {
 		count[g.worktree]++
 	}
-	label := func(g agentGroup) string {
+	label := func(g agentGroup, withRepo bool) string {
 		switch {
 		case g.key == m.homeWSKey:
 			return "~"
-		case count[g.worktree] > 1:
+		case count[g.worktree] > 1 && !withRepo:
 			return g.repo + "/" + g.worktree
 		}
 		return g.worktree
 	}
-	item := func(g agentGroup, maxW int) string {
-		name := truncateTo(label(g), maxW)
+	item := func(g agentGroup, maxW int, withRepo bool) string {
+		name := truncateTo(label(g, withRepo), maxW)
 		st := dimStyle
 		switch {
 		case g.attn == attnWaiting:
@@ -2359,18 +2368,35 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 		return st.Render(name)
 	}
 	sep := dimStyle.Render(" · ")
-	sepW := lipgloss.Width(sep)
+	repoSep := barSep.Render(" │ ")
+	// lead is what goes before item i: a separator, and the repo's name when
+	// item i starts a new repo.
+	lead := func(i int, withRepo bool) string {
+		g := groups[i]
+		newRepo := i == 0 || groups[i-1].repo != g.repo
+		var s string
+		switch {
+		case i == 0:
+		case withRepo && newRepo:
+			s = repoSep
+		default:
+			s = sep
+		}
+		if withRepo && newRepo && g.key != m.homeWSKey {
+			s += barSep.Render(truncateTo(g.repo, 16)+":") + " "
+		}
+		return s
+	}
 
 	// Build the strip from the first n items, with "+N" for the rest.
-	build := func(texts []string, n int) (string, []stripItem) {
+	build := func(texts []string, n int, withRepo bool) (string, []stripItem) {
 		col := leftW + lipgloss.Width(stripSep)
 		var b strings.Builder
 		var items []stripItem
 		for i := range n {
-			if i > 0 {
-				b.WriteString(sep)
-				col += sepW
-			}
+			l := lead(i, withRepo)
+			b.WriteString(l)
+			col += lipgloss.Width(l)
 			w := lipgloss.Width(texts[i])
 			b.WriteString(texts[i])
 			items = append(items, stripItem{group: groups[i], start: col, end: col + w})
@@ -2381,33 +2407,38 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 		}
 		return stripSep + b.String(), items
 	}
-
-	// Try full names, then shorter ones; then drop items from the end.
-	var texts []string
-	for _, maxW := range []int{32, 16, 10} {
-		texts = texts[:0]
-		width := 0
-		for i, g := range groups {
-			texts = append(texts, item(g, maxW))
-			if i > 0 {
-				width += sepW
-			}
-			width += lipgloss.Width(texts[i])
+	width := func(texts []string, n int, withRepo bool) int {
+		w := 0
+		for i := range n {
+			w += lipgloss.Width(lead(i, withRepo)) + lipgloss.Width(texts[i])
 		}
-		if width <= avail {
-			return build(texts, len(texts))
+		if rest := len(texts) - n; rest > 0 {
+			w += lipgloss.Width(" +" + strconv.Itoa(rest))
+		}
+		return w
+	}
+
+	// Try with repo names, then without; each with full names, then shorter
+	// ones. Then drop items from the end.
+	withRepos := []bool{false}
+	if len(repos) > 1 {
+		withRepos = []bool{true, false}
+	}
+	var texts []string
+	for _, withRepo := range withRepos {
+		for _, maxW := range []int{32, 16, 10} {
+			texts = texts[:0]
+			for _, g := range groups {
+				texts = append(texts, item(g, maxW, withRepo))
+			}
+			if width(texts, len(texts), withRepo) <= avail {
+				return build(texts, len(texts), withRepo)
+			}
 		}
 	}
 	for n := len(texts) - 1; n >= 1; n-- {
-		width := lipgloss.Width(" +" + strconv.Itoa(len(texts)-n))
-		for i := range n {
-			if i > 0 {
-				width += sepW
-			}
-			width += lipgloss.Width(texts[i])
-		}
-		if width <= avail {
-			return build(texts, n)
+		if width(texts, n, false) <= avail {
+			return build(texts, n, false)
 		}
 	}
 	return "", nil

@@ -275,7 +275,9 @@ The bar lists every open worktree after its icons, in a fixed order, coloured by
 are doing: yellow while working, green `✓` when done and unread, red `!` when waiting for you, and
 dim when idle. Once you have looked at a finished agent it turns white ("your turn" in the board)
 and stays white until it works again or you dismiss it with **`ctrl+q`** (current worktree) or `x`
-in the board. The current worktree is underlined. Click a name to jump there.
+in the board. The current worktree is underlined. Click a name to jump there. With more than one
+repo open, each repo's worktrees follow its name (`front: beta · zeta │ back: alpha`); the repo
+names are hidden first when the bar is short of space.
 
 Press **`alt+n`** (from anywhere) to jump straight into the session of the agent that most needs
 you — agents waiting on input first, then unread completions — without opening the board; pressing

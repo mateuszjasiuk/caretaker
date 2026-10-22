@@ -719,7 +719,7 @@ const worktreeNameForbidden = "~^:?*[\\"
 // reusable as a defense-in-depth check by any future caller of CreateWorktree.
 //
 // Interior "/" is intentionally allowed: branch namespacing like "feature/foo"
-// is legitimate and the worktree_path template nests it as a subdirectory. Path
+// is legitimate. The tui flattens it to "feature-foo" for the worktree folder. Path
 // traversal stays impossible because ".." (in any component) is rejected, so no
 // join can climb out of the repo.
 func ValidateWorktreeName(name string) error {

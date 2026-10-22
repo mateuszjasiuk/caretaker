@@ -204,9 +204,10 @@ func (c *Controller) Load() ([]Group, error) {
 
 // Create adds a new worktree + branch named `name` in repo r, based on baseRef
 // (empty = current HEAD), returning the created worktree. If the branch already
-// exists locally, the worktree uses it instead.
+// exists locally, the worktree uses it instead. Slashes in name become '-' in
+// the path, so "feature/foo" gets a flat folder but keeps its branch name.
 func (c *Controller) Create(r repo.Repo, name, baseRef string) (repo.Worktree, error) {
-	relPath := strings.ReplaceAll(c.cfg.WorktreePath, "{name}", name)
+	relPath := strings.ReplaceAll(c.cfg.WorktreePath, "{name}", strings.ReplaceAll(name, "/", "-"))
 	branch := strings.ReplaceAll(c.cfg.BranchName, "{name}", name)
 	return repo.CreateWorktree(r, relPath, branch, baseRef)
 }

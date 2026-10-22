@@ -32,7 +32,7 @@ type Config struct {
 	// Shell is the command launched for a terminal session.
 	Shell string `toml:"shell"`
 	// WorktreePath is the path template for new worktrees, relative to the repo.
-	// Supports {name}.
+	// Supports {name}, with any '/' in the name replaced by '-'.
 	WorktreePath string `toml:"worktree_path"`
 	// BranchName is the branch-name template for new worktrees. Supports {name}.
 	BranchName string `toml:"branch_name"`

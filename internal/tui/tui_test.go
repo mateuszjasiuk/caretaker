@@ -3765,3 +3765,29 @@ func TestFocusCommandRunsOncePerFolderGain(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// TestCreatedWithFileWarningStillOpens: worktree files that could not be
+// copied or linked are reported, but the new worktree opens anyway.
+func TestCreatedWithFileWarningStillOpens(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	ctrl := &Controller{cfg: config.Config{
+		Editor: "cat", Agent: "cat", Shell: "sh",
+		Keys: config.Default().Keys,
+	}}
+	mgr := session.NewManager()
+	t.Cleanup(mgr.CloseAll)
+	m := New(ctrl, mgr)
+	mm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = mm.(Model)
+	m.beginCreating("repo", "wt")
+
+	wt := repo.Worktree{Repo: "repo", Name: "wt", Path: t.TempDir()}
+	mm, _ = m.Update(createdMsg{repo: "repo", name: "wt", wt: wt, warn: ".env: permission denied"})
+	m = mm.(Model)
+	if m.current == nil || m.current.key != "repo/wt" {
+		t.Fatalf("worktree should open despite the warning, current = %+v", m.current)
+	}
+	if m.status != "worktree files: .env: permission denied" || m.statusLevel != statusError {
+		t.Errorf("warning not shown as an error, status = %q", m.status)
+	}
+}

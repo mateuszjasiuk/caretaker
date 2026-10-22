@@ -664,11 +664,13 @@ type loadedMsg struct {
 
 // createdMsg reports one finished `git worktree add`. repo and name identify the
 // pending row to retire; they are carried separately from wt because a failure
-// leaves wt zero and the row still has to go.
+// leaves wt zero and the row still has to go. warn names worktree files that
+// could not be copied or linked; the worktree still opens.
 type createdMsg struct {
 	repo string
 	name string
 	wt   repo.Worktree
+	warn string
 	err  error
 }
 
@@ -1350,7 +1352,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setError("create error: " + msg.err.Error())
 			return m, m.loadCmd()
 		}
-		return m.activate(msg.wt.Repo, msg.wt.Name, msg.wt.Path)
+		next, cmd := m.activate(msg.wt.Repo, msg.wt.Name, msg.wt.Path)
+		// An open error from activate is the more urgent message; keep it.
+		if msg.warn != "" {
+			if nm, ok := next.(Model); ok && nm.status == "" {
+				nm.setError("worktree files: " + msg.warn)
+				next = nm
+			}
+		}
+		return next, cmd
 
 	case actionDoneMsg:
 		if msg.err != nil {
@@ -4577,8 +4587,8 @@ func (m Model) handleCreateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// long before they finish, so the deck row is what keeps the work visible.
 		m.beginCreating(r.Name, name)
 		return m, tea.Batch(focusCmd, flashTick, func() tea.Msg {
-			wt, err := m.ctrl.Create(r, name, "")
-			return createdMsg{repo: r.Name, name: name, wt: wt, err: err}
+			wt, warn, err := m.ctrl.Create(r, name, "")
+			return createdMsg{repo: r.Name, name: name, wt: wt, warn: warn, err: err}
 		})
 	}
 	var cmd tea.Cmd

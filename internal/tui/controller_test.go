@@ -401,7 +401,7 @@ func TestControllerCreateFlattensSlashedName(t *testing.T) {
 	}
 
 	c := NewController(config.Default())
-	wt, err := c.Create(repo.Repo{Name: "demo", Path: dir}, "feature/foo", "")
+	wt, _, err := c.Create(repo.Repo{Name: "demo", Path: dir}, "feature/foo", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -500,3 +500,50 @@ func TestLoadWithNoRootAtAll(t *testing.T) {
 		t.Fatal("a config with neither root nor roots should fail")
 	}
 }
+
+func TestLoadWorktreeFiles(t *testing.T) {
+	cfg := loadTOML(t, `
+[worktree_files]
+copy = [".env"]
+link = ["node_modules"]
+
+[repos.api.worktree_files]
+copy = [".env*", "apps/*/.env"]
+
+[repos."work/web".worktree_files]
+link = []
+`)
+	if got := cfg.WorktreeFilesFor("api"); !reflect.DeepEqual(got.Copy, []string{".env*", "apps/*/.env"}) ||
+		!reflect.DeepEqual(got.Link, []string{"node_modules"}) {
+		t.Errorf("api should replace copy and keep the default link, got %+v", got)
+	}
+	if got := cfg.WorktreeFilesFor("work/web"); !reflect.DeepEqual(got.Copy, []string{".env"}) || len(got.Link) != 0 {
+		t.Errorf("work/web should keep the default copy and opt out of link, got %+v", got)
+	}
+	if got := cfg.WorktreeFilesFor("other"); !reflect.DeepEqual(got, cfg.WorktreeFiles) {
+		t.Errorf("a repo without an entry should get the defaults, got %+v", got)
+	}
+}
+
+func TestLoadRejectsBadWorktreeFiles(t *testing.T) {
+	cases := map[string]string{
+		"[worktree_files]\ncopy = [\"\"]":                  "worktree_files.copy[0]",
+		"[worktree_files]\nlink = [\"a\", \"/etc/hosts\"]": "worktree_files.link[1]",
+		"[repos.api.worktree_files]\ncopy = [\"../x\"]":    "repos.api.worktree_files.copy[0]",
+		"[worktree_files]\ncopy = [\"[\"]":                 "worktree_files.copy[0]",
+		"[worktree_files]\ncopy = [\"./\"]":                "worktree_files.copy[0]",
+	}
+	for body, want := range cases {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.toml")
+		content := "root = " + strconv.Quote(dir) + "\n" + body + "\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("CT_CONFIG", path)
+		_, err := Load()
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: want an error naming %s, got %v", body, want, err)
+		}
+	}
+}

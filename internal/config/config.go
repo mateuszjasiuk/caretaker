@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 
@@ -43,6 +44,12 @@ type Config struct {
 	// focus: on switching to it, or when ct's window gets focus back. The
 	// folder is added as the last argument. Empty means off.
 	FocusCommand string `toml:"focus_command"`
+	// WorktreeFiles are the files copied or linked from a repo's main checkout
+	// into every new worktree. Repos can replace these lists under Repos.
+	WorktreeFiles WorktreeFiles `toml:"worktree_files"`
+	// Repos holds per-repo settings, keyed by the repo name ct shows ("api",
+	// or "work/api" when two roots hold a repo with the same name).
+	Repos map[string]RepoConfig `toml:"repos"`
 	// Keys configures the reserved navigation keystrokes.
 	Keys Keys `toml:"keys"`
 	// Usage configures the plan usage-limit gauge.
@@ -89,6 +96,26 @@ type Stack struct {
 	// AutoMerge bypasses ct's merge confirmation panel. This is distinct from
 	// GitHub auto-merge: an eligible merge runs immediately when requested.
 	AutoMerge bool `toml:"auto_merge"`
+}
+
+// WorktreeFiles lists files to bring from a repo's main checkout into each
+// new worktree, usually ones git ignores (.env, node_modules). Entries are
+// filepath.Glob patterns relative to the repo root. A path that already exists
+// in the new worktree is never overwritten.
+type WorktreeFiles struct {
+	// Copy entries are copied, so each worktree gets its own version. On
+	// macOS the copy is an APFS clone: fast, and free on disk until changed.
+	Copy []string `toml:"copy"`
+	// Link entries become symlinks to the main checkout, shared by every
+	// worktree.
+	Link []string `toml:"link"`
+}
+
+// RepoConfig holds settings for one repo.
+type RepoConfig struct {
+	// WorktreeFiles replaces the top-level lists for this repo, one list at a
+	// time: a repo that sets only `copy` keeps the default `link`.
+	WorktreeFiles WorktreeFiles `toml:"worktree_files"`
 }
 
 // Diff configures the diff viewer's git invocations and optional external
@@ -336,6 +363,17 @@ func Load() (Config, error) {
 	} else {
 		cfg.Agents.Claude.Command = cfg.Agent
 	}
+	// A repo list that is not set falls back to the top-level one; a list set
+	// to [] stays empty, so a repo can opt out.
+	for name, rc := range cfg.Repos {
+		if !metadata.IsDefined("repos", name, "worktree_files", "copy") {
+			rc.WorktreeFiles.Copy = cfg.WorktreeFiles.Copy
+		}
+		if !metadata.IsDefined("repos", name, "worktree_files", "link") {
+			rc.WorktreeFiles.Link = cfg.WorktreeFiles.Link
+		}
+		cfg.Repos[name] = rc
+	}
 
 	if err := cfg.validate(); err != nil {
 		return cfg, err
@@ -368,6 +406,15 @@ func (c Config) RepoRoots() []string {
 		out = append(out, root)
 	}
 	return out
+}
+
+// WorktreeFilesFor returns the files to copy or link into a new worktree of
+// the named repo: its own lists when it has a [repos] entry, else the defaults.
+func (c Config) WorktreeFilesFor(repoName string) WorktreeFiles {
+	if rc, ok := c.Repos[repoName]; ok {
+		return rc.WorktreeFiles
+	}
+	return c.WorktreeFiles
 }
 
 // ResolveRoot expands ~ and makes root absolute, returning an error if it
@@ -472,6 +519,52 @@ func (c *Config) validate() error {
 		if pattern == "" {
 			return fmt.Errorf("config `diff.exclude` entries must not be empty")
 		}
+	}
+	if err := validateWorktreeFiles("worktree_files", c.WorktreeFiles); err != nil {
+		return err
+	}
+	for name, rc := range c.Repos {
+		if err := validateWorktreeFiles("repos."+name+".worktree_files", rc.WorktreeFiles); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateWorktreeFiles checks that every pattern stays inside the repo, so a
+// rule can never read from or write to somewhere outside the two checkouts.
+func validateWorktreeFiles(key string, wf WorktreeFiles) error {
+	lists := []struct {
+		name     string
+		patterns []string
+	}{{"copy", wf.Copy}, {"link", wf.Link}}
+	for _, list := range lists {
+		for i, pattern := range list.patterns {
+			if err := checkWorktreePattern(pattern); err != nil {
+				return fmt.Errorf("config `%s.%s[%d]`: %w", key, list.name, i, err)
+			}
+		}
+	}
+	return nil
+}
+
+func checkWorktreePattern(pattern string) error {
+	if pattern == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	if filepath.IsAbs(pattern) || strings.HasPrefix(pattern, "~") {
+		return fmt.Errorf("%q must be relative to the repo root", pattern)
+	}
+	for _, part := range strings.Split(filepath.ToSlash(pattern), "/") {
+		if part == ".." {
+			return fmt.Errorf("%q must not contain `..`", pattern)
+		}
+	}
+	if filepath.Clean(pattern) == "." {
+		return fmt.Errorf("%q names the whole repo; list the files instead", pattern)
+	}
+	if _, err := filepath.Match(pattern, ""); err != nil {
+		return fmt.Errorf("%q: %w", pattern, err)
 	}
 	return nil
 }

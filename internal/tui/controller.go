@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -205,11 +206,23 @@ func (c *Controller) Load() ([]Group, error) {
 // Create adds a new worktree + branch named `name` in repo r, based on baseRef
 // (empty = current HEAD), returning the created worktree. If the branch already
 // exists locally, the worktree uses it instead. Slashes in name become '-' in
-// the path, so "feature/foo" gets a flat folder but keeps its branch name.
-func (c *Controller) Create(r repo.Repo, name, baseRef string) (repo.Worktree, error) {
+// the path, so "feature/foo" gets a flat folder but keeps its branch name. It
+// then copies or links the configured worktree files; those failures do not
+// fail the create and come back as a warning instead, since the worktree
+// itself is usable.
+func (c *Controller) Create(r repo.Repo, name, baseRef string) (wt repo.Worktree, warn string, err error) {
 	relPath := strings.ReplaceAll(c.cfg.WorktreePath, "{name}", strings.ReplaceAll(name, "/", "-"))
 	branch := strings.ReplaceAll(c.cfg.BranchName, "{name}", name)
-	return repo.CreateWorktree(r, relPath, branch, baseRef)
+	wt, err = repo.CreateWorktree(r, relPath, branch, baseRef)
+	if err != nil {
+		return wt, "", err
+	}
+	files := c.cfg.WorktreeFilesFor(r.Name)
+	if errs := repo.ApplyWorktreeFiles(r.Path, wt.Path, files.Copy, files.Link); len(errs) > 0 {
+		warn = errors.Join(errs...).Error()
+		warn = strings.ReplaceAll(warn, "\n", "; ")
+	}
+	return wt, warn, nil
 }
 
 // Remove deletes a worktree, and its branch when deleteBranch is set.

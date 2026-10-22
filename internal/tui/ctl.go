@@ -29,6 +29,7 @@ type ctlSpawnedMsg struct {
 	repo     repo.Repo
 	name     string
 	wt       repo.Worktree
+	warn     string // worktree files that could not be copied or linked
 	err      error
 	provider agent.Provider
 	prompt   string
@@ -265,8 +266,8 @@ func (m Model) ctlSpawn(p *ctl.Pending) (tea.Model, tea.Cmd) {
 	m.beginCreating(r.Name, req.Name)
 	rr, name, base, prompt := *r, req.Name, req.Base, req.Text
 	create := func() tea.Msg {
-		wt, err := m.ctrl.Create(rr, name, base)
-		return ctlSpawnedMsg{p: p, repo: rr, name: name, wt: wt, err: err, provider: provider, prompt: prompt}
+		wt, warn, err := m.ctrl.Create(rr, name, base)
+		return ctlSpawnedMsg{p: p, repo: rr, name: name, wt: wt, warn: warn, err: err, provider: provider, prompt: prompt}
 	}
 	return m, tea.Batch(create, m.flashCmd("creating "+name+"…"))
 }
@@ -283,7 +284,11 @@ func (m Model) handleCtlSpawned(msg ctlSpawnedMsg) (tea.Model, tea.Cmd) {
 		msg.p.Fail(fmt.Errorf("worktree created at %s but its sessions failed to start: %w", msg.wt.Path, err))
 		return mm, tea.Batch(cmd, mm.loadCmd())
 	}
-	msg.p.Reply(ctl.Response{OK: true, Message: fmt.Sprintf("created %s at %s and started a %s agent", key, msg.wt.Path, providerName(msg.provider))})
+	reply := fmt.Sprintf("created %s at %s and started a %s agent", key, msg.wt.Path, providerName(msg.provider))
+	if msg.warn != "" {
+		reply += "; some worktree files were not copied: " + msg.warn
+	}
+	msg.p.Reply(ctl.Response{OK: true, Message: reply})
 	return mm, tea.Batch(cmd, mm.loadCmd(), mm.flashCmd("orchestrator opened "+key))
 }
 

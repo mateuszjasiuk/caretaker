@@ -81,6 +81,24 @@ restore_sessions = false
 # the last argument. Empty is off.
 focus_command = ""
 
+# Files to bring from the repo's main checkout into every new worktree, usually
+# ones git ignores. Entries are glob patterns relative to the repo root (`*`,
+# `?`, `[...]`; no `**`). `copy` gives each worktree its own version; on macOS
+# it is an APFS clone, so even node_modules copies near-instantly and uses no
+# extra disk space until a file changes. `link` makes a symlink to the main
+# checkout instead, shared by every worktree. A path that already exists in the
+# new worktree is never overwritten, and a pattern that matches nothing is
+# skipped. If something cannot be copied, ct says so and opens the worktree
+# anyway.
+[worktree_files]
+copy = [".env", ".env.local"]
+
+# Per-repo rules, keyed by the repo name ct shows (quote names like "work/api").
+# Each list replaces the default one only when set, so this repo keeps the
+# default `link`; set a list to [] to turn it off for one repo.
+[repos.api.worktree_files]
+copy = [".env*", "apps/*/.env", "node_modules"]
+
 # Both providers are enabled by default, with Claude initially selected, so
 # this whole section may be omitted. `default` must also appear in `enabled`.
 [agents]

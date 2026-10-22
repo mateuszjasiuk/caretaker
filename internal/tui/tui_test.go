@@ -1459,7 +1459,7 @@ func TestSeenMarkerLifecycle(t *testing.T) {
 		2: {level: attnSeen, key: "r/b"},
 		3: {level: attnDone, key: "r/a"},
 	}
-	mm, _ = m.handleKey(altKey('e'))
+	mm, _ = m.handleKey(ctrlKey('q'))
 	m = mm.(Model)
 	if _, ok := m.attention[1]; ok {
 		t.Error("dismiss should drop the current worktree's seen marker")

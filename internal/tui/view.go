@@ -719,7 +719,7 @@ func (m Model) renderBoard(h int) string {
 			keyhint("↑↓", "move"), keyhint("1-9", "jump"), keyhint("enter", "focus"),
 		}, separator),
 		"  "+strings.Join([]string{
-			keyhint("n", "new"), keyhint("r", "restart agent"), keyhint("d", "remove agent"), keyhint("esc", "close"),
+			keyhint("n", "new"), keyhint("r", "restart agent"), keyhint("d", "remove agent"), keyhint("x", "dismiss"), keyhint("esc", "close"),
 		}, separator),
 	)
 
@@ -750,6 +750,8 @@ func (m Model) boardAgentLine(r boardRow, innerW int) string {
 		statusSt = boldRed
 	case r.attn == attnDone:
 		statusSt = boldGreen
+	case r.attn == attnSeen:
+		statusSt = nameStyle
 	case strings.HasPrefix(status, "working"):
 		statusSt = accentStyle
 	}
@@ -1797,6 +1799,7 @@ func (m Model) renderHelp(h int) string {
 	)
 	rows = append(rows,
 		row(m.keys.Attention, "jump to agent needing attention"),
+		row(m.keys.Dismiss, "dismiss this worktree's \"your turn\""),
 		row(m.keys.PrevAgent+" / "+m.keys.NextAgent, "prev / next agent"),
 	)
 	if m.usageEnabled() {
@@ -2319,7 +2322,8 @@ var stripSep = "   " + barSep.Render("│") + "  "
 
 // agentStripLayout lays the agent strip out in the bar's first row, between the
 // icons and the right-side facts: each open worktree's name, coloured by its
-// agents (yellow working, green ✓ done, red ! waiting, dim idle), with the
+// agents (yellow working, green ✓ done, red ! waiting, white seen but not
+// answered, dim idle), with the
 // current worktree underlined. Names shorten before items are dropped, and
 // dropped items show as "+N". Returns "" when the strip is off or doesn't fit.
 func (m Model) agentStripLayout() (string, []stripItem) {
@@ -2360,6 +2364,8 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 			name, st = "✓ "+name, boldGreen
 		case g.busy:
 			st = dirtyStyle
+		case g.attn == attnSeen:
+			st = nameStyle
 		}
 		if m.current != nil && g.key == m.current.key {
 			st = st.Underline(true)

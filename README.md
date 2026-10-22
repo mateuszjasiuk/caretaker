@@ -112,6 +112,7 @@ prev_agent  = "f3"     # previous agent in the active worktree
 global_config = "alt+g" # open the home-directory workspace
 orchestrator = "alt+o" # open the orchestrator agent (see below)
 attention   = "alt+n"  # jump to the agent needing attention (cycles on repeat)
+dismiss     = "alt+e"  # clear the current worktree's "your turn" (white in the bar)
 back        = "alt+b"  # return to the previous work location (toggles on repeat)
 usage       = "alt+u"  # plan usage for enabled agent providers
 help        = "f1"     # toggle the key/legend overlay (also "?" in the deck)
@@ -343,11 +344,14 @@ worktree shows on the right.
 ### Agent providers and lifecycle
 
 Press **`alt+a`** to open the agent board for every active worktree. From there, `n` creates an
-agent, `enter` focuses one, `r` restarts it in place, and `d` removes it.
+agent, `enter` focuses one, `r` restarts it in place, `d` removes it, and `x` dismisses its
+"your turn" marker.
 
 The bar lists every open worktree after its icons, in a fixed order, coloured by what its agents
 are doing: yellow while working, green `✓` when done and unread, red `!` when waiting for you, and
-dim when idle. The current worktree is underlined. Click a name to jump there.
+dim when idle. Once you have looked at a finished agent it turns white ("your turn" in the board)
+and stays white until it works again or you dismiss it with **`alt+e`** (current worktree) or `x`
+in the board. The current worktree is underlined. Click a name to jump there.
 
 Press **`alt+n`** (from anywhere) to jump straight into the session of the agent that most needs
 you — agents waiting on input first, then unread completions — without opening the board; pressing

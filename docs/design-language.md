@@ -196,11 +196,11 @@ Ask only for information the system cannot infer. Start focus on the field most 
 
 ### Agent strip
 
-After the bar icons, a faint `│` and then every open worktree, separated by `·`. The order is fixed (repos in deck order, worktrees by name) so items never move; only colour and glyph change: yellow working, green `✓` done, red `!` waiting, dim idle, underline for the current worktree. Names shorten before items drop, and dropped items show as `+N`. The strip uses only space the right-side facts leave free.
+After the bar icons, a faint `│` and then every open worktree, separated by `·`. The order is fixed (repos in deck order, worktrees by name) so items never move; only colour and glyph change: yellow working, green `✓` done, red `!` waiting, white seen but not answered, dim idle, underline for the current worktree. Names shorten before items drop, and dropped items show as `+N`. The strip uses only space the right-side facts leave free.
 
 ### Notifications and attention
 
-Notifications are work routing, not a feed. Aggregate them in the bar, identify urgency by glyph and count, and make the summary actionable. Visiting the relevant agent acknowledges unread completion; merely passing through unrelated views does not. Bells and visual signals should be configurable and rate-limited.
+Notifications are work routing, not a feed. Aggregate them in the bar, identify urgency by glyph and count, and make the summary actionable. Visiting the relevant agent acknowledges unread completion; merely passing through unrelated views does not. An acknowledged completion stays marked as "your turn" until the agent works again or the user dismisses it. Bells and visual signals should be configurable and rate-limited.
 
 ## Accessibility standard
 

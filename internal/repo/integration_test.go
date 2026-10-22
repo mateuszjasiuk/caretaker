@@ -59,6 +59,46 @@ func TestCreateWorktreeFetchesOrigin(t *testing.T) {
 	}
 }
 
+// TestCreateWorktreeUsesExistingLocalBranch verifies that a branch which exists
+// only locally is checked out as-is instead of failing on `-b`.
+func TestCreateWorktreeUsesExistingLocalBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		if _, err := Git(dir, args...); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+	run("init", "-b", "main")
+	run("config", "user.email", "t@t.t")
+	run("config", "user.name", "t")
+	run("commit", "--allow-empty", "-m", "initial")
+	run("branch", "feature/local")
+	run("checkout", "feature/local")
+	run("commit", "--allow-empty", "-m", "local work")
+	run("checkout", "main")
+
+	r := Repo{Name: "demo", Path: dir}
+	wt, err := CreateWorktree(r, ".worktrees/feature/local", "feature/local", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wt.Branch != "feature/local" {
+		t.Fatalf("branch = %q, want feature/local", wt.Branch)
+	}
+	subject, err := Git(wt.Path, "log", "-1", "--format=%s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(subject); got != "local work" {
+		t.Fatalf("worktree tip = %q, want existing branch tip", got)
+	}
+}
+
 // TestWorktreeLifecycle exercises discovery + create/list/status/remove against a
 // real temporary git repo.
 func TestWorktreeLifecycle(t *testing.T) {

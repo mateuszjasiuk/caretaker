@@ -203,7 +203,8 @@ func (c *Controller) Load() ([]Group, error) {
 }
 
 // Create adds a new worktree + branch named `name` in repo r, based on baseRef
-// (empty = current HEAD), returning the created worktree.
+// (empty = current HEAD), returning the created worktree. If the branch already
+// exists locally, the worktree uses it instead.
 func (c *Controller) Create(r repo.Repo, name, baseRef string) (repo.Worktree, error) {
 	relPath := strings.ReplaceAll(c.cfg.WorktreePath, "{name}", name)
 	branch := strings.ReplaceAll(c.cfg.BranchName, "{name}", name)

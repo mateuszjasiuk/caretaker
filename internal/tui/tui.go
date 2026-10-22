@@ -393,6 +393,9 @@ type Model struct {
 	// stored unread markers (done) keyed by agent pid; waiting badges are
 	// derived live from agentStatus and never stored here
 	attention map[int]attnEntry
+	// highlighted marks worktrees (by key) the user flagged with the highlight
+	// key; they show white in the bar's agent strip until flagged off.
+	highlighted map[string]bool
 
 	// returnLocation is a one-level navigation toggle, captured before an
 	// attention jump or cross-worktree activation.
@@ -564,6 +567,7 @@ func New(ctrl *Controller, mgr *session.Manager) Model {
 		focus:           focusNew,
 		agentPrevStatus: map[int]string{},
 		attention:       map[int]attnEntry{},
+		highlighted:     map[string]bool{},
 		removed:         map[int]int64{},
 		codexTranscript: map[*session.Session]bool{},
 		stackInfo:       map[string]stackEntry{},
@@ -1724,14 +1728,27 @@ func (m Model) clearWorkspaceAttention() {
 	}
 }
 
-// dismissWorkspaceSeen drops the seen markers of every agent in the current
-// workspace: the user is done with their output.
-func (m Model) dismissWorkspaceSeen() {
+// toggleHighlight flips the current workspace between white and dim in the
+// bar's agent strip. Turning it white flags it until the next toggle; turning
+// it dim also drops its agents' seen markers.
+func (m Model) toggleHighlight() {
 	if m.current == nil {
 		return
 	}
+	key := m.current.key
+	seen := false
+	for _, e := range m.attention {
+		if e.key == key && e.level == attnSeen {
+			seen = true
+		}
+	}
+	if !m.highlighted[key] && !seen {
+		m.highlighted[key] = true
+		return
+	}
+	delete(m.highlighted, key)
 	for pid, e := range m.attention {
-		if e.key == m.current.key {
+		if e.key == key {
 			m.dropSeen(pid)
 		}
 	}
@@ -1834,6 +1851,7 @@ type agentGroup struct {
 	agents                    []boardRow
 	attn                      attnLevel // highest attention among agents
 	busy                      bool      // some agent is working
+	highlighted               bool      // flagged with the highlight key
 	opened                    int64
 }
 
@@ -1851,6 +1869,7 @@ func (m Model) agentGroup(key, repoName, wtName, path string) (agentGroup, bool)
 	if m.state != nil {
 		g.opened = m.state.Opened(key)
 	}
+	g.highlighted = m.highlighted[key]
 	for i, a := range ws.Agents {
 		pid := a.Pid()
 		attn := m.agentAttn(pid)
@@ -3122,8 +3141,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == m.keys.Attention {
 		return m.jumpAttention()
 	}
-	if msg.String() == m.keys.Dismiss {
-		m.dismissWorkspaceSeen()
+	if msg.String() == m.keys.Highlight {
+		m.toggleHighlight()
 		return m, nil
 	}
 	if msg.String() == m.keys.GlobalConfig {
@@ -3249,7 +3268,7 @@ func restoredSessionIndex(sessions []*session.Session, target *session.Session, 
 func (m Model) isReservedActionKey(s string) bool {
 	switch s {
 	case m.keys.Cycle, m.keys.CycleBack, m.keys.Picker, m.keys.Palette,
-		m.keys.Attention, m.keys.Dismiss, m.keys.GlobalConfig, m.keys.NextAgent, m.keys.PrevAgent,
+		m.keys.Attention, m.keys.Highlight, m.keys.GlobalConfig, m.keys.NextAgent, m.keys.PrevAgent,
 		m.keys.CommandPalette, m.keys.GotoEditor, m.keys.GotoAgent, m.keys.GotoTerm:
 		return true
 	}
@@ -4762,6 +4781,7 @@ func (m *Model) stopWorkspace(key string) {
 			delete(m.attention, pid)
 		}
 	}
+	delete(m.highlighted, key)
 	if m.current != nil && m.current.key == key {
 		m.current = nil
 		m.screen = screenPicker

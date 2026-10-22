@@ -1786,7 +1786,7 @@ func (m Model) renderHelp(h int) string {
 	)
 	rows = append(rows,
 		row(m.keys.Attention, "jump to agent needing attention"),
-		row(m.keys.Dismiss, "dismiss this worktree's \"your turn\""),
+		row(m.keys.Highlight, "highlight this worktree in the bar (toggle)"),
 		row(m.keys.PrevAgent+" / "+m.keys.NextAgent, "prev / next agent"),
 	)
 	if m.usageEnabled() {
@@ -2309,7 +2309,7 @@ var stripSep = "   " + barSep.Render("│") + "  "
 // agentStripLayout lays the agent strip out in the bar's first row, between the
 // icons and the right-side facts: each open worktree's name, coloured by its
 // agents (yellow working, green ✓ done, red ! waiting, white seen but not
-// answered, dim idle), with the current worktree underlined. With more than
+// answered or highlighted, dim idle), with the current worktree underlined. With more than
 // one repo open, each repo's worktrees follow its name. Repo names go first
 // when space is short, then names shorten, then items are dropped and show as
 // "+N". Returns "" when the strip is off or doesn't fit.
@@ -2359,7 +2359,7 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 			name, st = "✓ "+name, boldGreen
 		case g.busy:
 			st = dirtyStyle
-		case g.attn == attnSeen:
+		case g.attn == attnSeen || g.highlighted:
 			st = nameStyle
 		}
 		if m.current != nil && g.key == m.current.key {

@@ -1423,6 +1423,58 @@ func TestAttentionTransitionDetection(t *testing.T) {
 	}
 }
 
+// TestSeenMarkerLifecycle covers the "your turn" marker: viewing a finished
+// agent turns its marker seen, a new turn drops it, and the dismiss key and the
+// board's x drop it on purpose.
+func TestSeenMarkerLifecycle(t *testing.T) {
+	m := sampleModel()
+	m.active = []activeItem{
+		{repo: repo.Repo{Name: "r"}, view: WorktreeView{WT: repo.Worktree{Name: "a", Path: "/r/a"}}},
+	}
+	ws := &session.Workspace{Agents: []*session.Session{{}}}
+	m.current = &workspaceRef{key: "r/a", path: "/r/a", ws: ws}
+	m.attention = map[int]attnEntry{1: {level: attnDone, key: "r/a"}}
+
+	m.clearWorkspaceAttention()
+	if e := m.attention[1]; e.level != attnSeen {
+		t.Fatalf("viewing should turn done into seen, got %+v", e)
+	}
+	m.agentStatus = map[int]AgentStatus{1: {Status: "idle"}}
+	if got := m.boardStatus(1, attnSeen); got != "ready · your turn" {
+		t.Errorf("board status for seen = %q", got)
+	}
+
+	// A new turn drops the marker.
+	m.agentPrevStatus = map[int]string{1: "idle"}
+	mm, _ := m.update(statusMsg{byPid: map[int]AgentStatus{1: {Status: "busy", Cwd: "/r/a"}}})
+	m = mm.(Model)
+	if _, ok := m.attention[1]; ok {
+		t.Error("a busy agent should lose its seen marker")
+	}
+
+	// The dismiss key drops seen markers of the current worktree only, and
+	// leaves an unread marker alone.
+	m.attention = map[int]attnEntry{
+		1: {level: attnSeen, key: "r/a"},
+		2: {level: attnSeen, key: "r/b"},
+		3: {level: attnDone, key: "r/a"},
+	}
+	mm, _ = m.handleKey(altKey('e'))
+	m = mm.(Model)
+	if _, ok := m.attention[1]; ok {
+		t.Error("dismiss should drop the current worktree's seen marker")
+	}
+	if m.attention[2].level != attnSeen || m.attention[3].level != attnDone {
+		t.Errorf("dismiss should leave other markers alone, got %v", m.attention)
+	}
+
+	// Seen agents don't count for the attention jump.
+	m.attention = map[int]attnEntry{2: {level: attnSeen, key: "r/b"}}
+	if waiting, done := m.attnSummary(); waiting+done != 0 {
+		t.Errorf("seen markers should not count as attention, got %d/%d", waiting, done)
+	}
+}
+
 // TestRemovedAgentNotResurrectedByPoll guards the phantom-notification bug: an
 // agent deleted while waiting on a permission prompt can linger in
 // `claude agents --json` for a few polls, and the replace-all Claude poll would
@@ -1542,8 +1594,8 @@ func TestAttentionClearedOnAgentView(t *testing.T) {
 	if m2.screen != screenAgent {
 		t.Fatalf("expected screenAgent after cycle, got %v", m2.screen)
 	}
-	if _, ok := m2.attention[1]; ok {
-		t.Error("r/a marker should clear when cycling to the agent screen")
+	if e := m2.attention[1]; e.level != attnSeen {
+		t.Errorf("r/a marker should become seen when cycling to the agent screen, got %+v", e)
 	}
 	if e := m2.attention[2]; e.level != attnDone {
 		t.Errorf("r/b marker should be unaffected, got %+v", e)
@@ -1558,8 +1610,8 @@ func TestAttentionClearedOnAgentView(t *testing.T) {
 	m3.current = &workspaceRef{key: "r/a", path: "/r/a", ws: ws}
 	mm3, _ := m3.selectTab(screenAgent)
 	m4 := mm3.(Model)
-	if _, ok := m4.attention[1]; ok {
-		t.Error("r/a marker should clear on selectTab(agent)")
+	if e := m4.attention[1]; e.level != attnSeen {
+		t.Errorf("r/a marker should become seen on selectTab(agent), got %+v", e)
 	}
 	if e := m4.attention[2]; e.level != attnDone {
 		t.Errorf("r/b marker should be unaffected after selectTab, got %+v", e)
@@ -2196,8 +2248,8 @@ func TestBoardSortsAttentionFirst(t *testing.T) {
 	if m2.current == nil || m2.current.key != "repo/a" || m2.screen != screenAgent {
 		t.Fatalf("enter should switch to repo/a's agent screen, got %+v screen=%v", m2.current, m2.screen)
 	}
-	if _, ok := m2.attention[pid]; ok {
-		t.Error("focusing the agent should clear its unread marker")
+	if e := m2.attention[pid]; e.level != attnSeen {
+		t.Errorf("focusing the agent should mark its output seen, got %+v", e)
 	}
 }
 
@@ -3064,8 +3116,8 @@ func TestGotoScreenKeys(t *testing.T) {
 	if m.screen != screenAgent {
 		t.Fatalf("alt+2 should jump to the agent screen, got %v", m.screen)
 	}
-	if _, ok := m.attention[1]; ok {
-		t.Error("landing on the agent screen should clear the workspace's markers")
+	if e := m.attention[1]; e.level != attnSeen {
+		t.Errorf("landing on the agent screen should mark the workspace's markers seen, got %+v", e)
 	}
 
 	// From the picker with a workspace active: the jump still works.

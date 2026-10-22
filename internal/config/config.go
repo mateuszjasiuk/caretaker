@@ -190,6 +190,9 @@ type Keys struct {
 	// the next such agent on each press, collapsing the open-board/scan/select
 	// flow into one chord. An empty string disables it.
 	Attention string `toml:"attention"`
+	// Dismiss clears the "your turn" marker of the current worktree's agents:
+	// agents whose finished output you have seen but not answered.
+	Dismiss string `toml:"dismiss"`
 	// Back returns to the work location captured before the last attention jump
 	// or cross-worktree activation. Repeated presses toggle between the two.
 	Back string `toml:"back"`
@@ -240,7 +243,7 @@ func Default() Config {
 			GotoEditor: "alt+1", GotoAgent: "alt+2", GotoTerm: "alt+3",
 			Picker:  "ctrl+g",
 			Palette: "alt+a", NextAgent: "f4", PrevAgent: "f3",
-			Help: "f1", GlobalConfig: "alt+g", Attention: "alt+n", Back: "alt+b",
+			Help: "f1", GlobalConfig: "alt+g", Attention: "alt+n", Dismiss: "alt+e", Back: "alt+b",
 			TermSplitV: "alt+v", TermSplitH: "alt+s",
 			TermZoom: "alt+z", TermClose: "alt+x",
 			TermFocusLeft: "alt+h", TermFocusDown: "alt+j",

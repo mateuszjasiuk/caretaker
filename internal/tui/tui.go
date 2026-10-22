@@ -196,16 +196,18 @@ func (m Model) confirmSelectedKey() string {
 // attnLevel ranks an agent's attention state, highest first when sorting.
 // attnWaiting is derived live from the polled agent status and never stored;
 // attnDone is an unread marker recorded when a transition is observed and
-// cleared when the user views the workspace's agents.
+// turned into attnSeen when the user views the workspace's agents. attnSeen
+// stays until the agent works again or the user dismisses it.
 type attnLevel int
 
 const (
 	attnNone    attnLevel = iota // nothing pending
+	attnSeen                     // finished and viewed, still the user's turn
 	attnDone                     // busy → idle while unviewed (✓)
 	attnWaiting                  // live status "waiting" — needs input/permission (!)
 )
 
-// attnEntry is one stored unread marker (attnDone) for an agent, keyed by pid
+// attnEntry is one stored marker (attnDone or attnSeen) for an agent, keyed by pid
 // in Model.attention.
 type attnEntry struct {
 	level     attnLevel
@@ -1462,12 +1464,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			bell := false
 			for pid, st := range msg.byPid {
+				if st.Status == "busy" {
+					m.dropSeen(pid) // a new turn: it's no longer the user's turn
+				}
 				prev := m.agentPrevStatus[pid]
 				if prev != "busy" || (st.Status != "idle" && st.Status != "waiting") {
 					continue
 				}
-				// Skip the bell/marker if the user is already watching this agent.
+				// Skip the bell if the user is already watching this agent; the
+				// finished turn still waits on them.
 				if m.watchingAgent(pid) {
+					if key, ok := m.pathToKey(st.Cwd); ok && st.Status == "idle" {
+						m.recordAttention(pid, attnSeen, key, st.StartedAt)
+					}
 					continue
 				}
 				if st.Status == "waiting" {
@@ -1700,17 +1709,38 @@ func (m Model) recordAttention(pid int, level attnLevel, key string, startedAt i
 	m.attention[pid] = attnEntry{level: level, key: key, startedAt: startedAt}
 }
 
-// clearWorkspaceAttention drops the stored unread markers for every agent in
-// the current workspace. Live waiting badges are derived from agentStatus and
-// clear themselves once the agent's polled status changes.
+// clearWorkspaceAttention marks the unread markers of every agent in the
+// current workspace as seen. Live waiting badges are derived from agentStatus
+// and clear themselves once the agent's polled status changes.
 func (m Model) clearWorkspaceAttention() {
 	if m.current == nil {
 		return
 	}
 	for pid, e := range m.attention {
-		if e.key == m.current.key {
-			delete(m.attention, pid)
+		if e.key == m.current.key && e.level == attnDone {
+			e.level = attnSeen
+			m.attention[pid] = e
 		}
+	}
+}
+
+// dismissWorkspaceSeen drops the seen markers of every agent in the current
+// workspace: the user is done with their output.
+func (m Model) dismissWorkspaceSeen() {
+	if m.current == nil {
+		return
+	}
+	for pid, e := range m.attention {
+		if e.key == m.current.key {
+			m.dropSeen(pid)
+		}
+	}
+}
+
+// dropSeen removes pid's seen marker, leaving any other marker in place.
+func (m Model) dropSeen(pid int) {
+	if m.attention[pid].level == attnSeen {
+		delete(m.attention, pid)
 	}
 }
 
@@ -1757,10 +1787,17 @@ func (m *Model) applyProviderTransition(pid int, key, previous string, status Ag
 		if _, ok := m.busySince[pid]; !ok {
 			m.busySince[pid] = time.Now()
 		}
+		m.dropSeen(pid)
 	} else {
 		delete(m.busySince, pid)
 	}
-	if previous != "busy" || (status.Status != "idle" && status.Status != "waiting") || m.watchingAgent(pid) {
+	if previous != "busy" || (status.Status != "idle" && status.Status != "waiting") {
+		return
+	}
+	if m.watchingAgent(pid) {
+		if status.Status == "idle" {
+			m.recordAttention(pid, attnSeen, key, status.StartedAt)
+		}
 		return
 	}
 	if status.Status == "idle" {
@@ -1958,8 +1995,11 @@ func (m Model) boardStatus(pid int, attn attnLevel) string {
 		}
 		return "waiting"
 	case "idle":
-		if attn == attnDone {
+		switch attn {
+		case attnDone:
 			return "ready · new output"
+		case attnSeen:
+			return "ready · your turn"
 		}
 		return "idle"
 	default:
@@ -1980,7 +2020,7 @@ func (m Model) openBoard() (tea.Model, tea.Cmd) {
 	m.boardCursor = 0
 	rows, nav := m.buildBoard()
 	for i, ri := range nav {
-		if rows[ri].isAgent && rows[ri].attn > attnNone {
+		if rows[ri].isAgent && rows[ri].attn >= attnDone {
 			m.boardCursor = i
 			return m, nil
 		}
@@ -2044,6 +2084,11 @@ func (m Model) handleBoard(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		if r, ok := rowAt(m.boardCursor); ok && r.isAgent {
 			return m.beginAgentCloseConfirm(r), nil
+		}
+		return m, nil
+	case "x":
+		if r, ok := rowAt(m.boardCursor); ok && r.isAgent {
+			m.dropSeen(r.pid)
 		}
 		return m, nil
 	case "enter":
@@ -2174,7 +2219,7 @@ func (m Model) jumpAttention() (tea.Model, tea.Cmd) {
 	rows, nav := m.buildBoard()
 	var candidates []boardRow
 	for _, ri := range nav {
-		if r := rows[ri]; r.isAgent && r.attn > attnNone {
+		if r := rows[ri]; r.isAgent && r.attn >= attnDone {
 			candidates = append(candidates, r)
 		}
 	}
@@ -3077,6 +3122,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == m.keys.Attention {
 		return m.jumpAttention()
 	}
+	if msg.String() == m.keys.Dismiss {
+		m.dismissWorkspaceSeen()
+		return m, nil
+	}
 	if msg.String() == m.keys.GlobalConfig {
 		return m.activateGlobalConfig()
 	}
@@ -3200,7 +3249,7 @@ func restoredSessionIndex(sessions []*session.Session, target *session.Session, 
 func (m Model) isReservedActionKey(s string) bool {
 	switch s {
 	case m.keys.Cycle, m.keys.CycleBack, m.keys.Picker, m.keys.Palette,
-		m.keys.Attention, m.keys.GlobalConfig, m.keys.NextAgent, m.keys.PrevAgent,
+		m.keys.Attention, m.keys.Dismiss, m.keys.GlobalConfig, m.keys.NextAgent, m.keys.PrevAgent,
 		m.keys.CommandPalette, m.keys.GotoEditor, m.keys.GotoAgent, m.keys.GotoTerm:
 		return true
 	}

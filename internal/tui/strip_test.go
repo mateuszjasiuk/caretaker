@@ -16,6 +16,16 @@ import (
 // open workspace per name in wts (all in repo "repo"); the last one is current.
 func stripModel(t *testing.T, w int, wts ...string) Model {
 	t.Helper()
+	var keys []string
+	for _, name := range wts {
+		keys = append(keys, "repo/"+name)
+	}
+	return stripModelKeys(t, w, keys...)
+}
+
+// stripModelKeys is stripModel with "repo/worktree" keys, for several repos.
+func stripModelKeys(t *testing.T, w int, keys ...string) Model {
+	t.Helper()
 	ctrl := &Controller{cfg: config.Config{
 		Editor: "cat", Agent: "cat", Shell: "sh",
 		Keys:    config.Default().Keys,
@@ -27,13 +37,14 @@ func stripModel(t *testing.T, w int, wts ...string) Model {
 	m := New(ctrl, mgr)
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: 24})
 	m = mm.(Model)
-	for _, name := range wts {
+	for _, key := range keys {
+		repoName, name, _ := strings.Cut(key, "/")
 		dir := t.TempDir()
 		m.active = append(m.active, activeItem{
-			repo: repo.Repo{Name: "repo"},
+			repo: repo.Repo{Name: repoName},
 			view: WorktreeView{WT: repo.Worktree{Name: name, Path: dir}},
 		})
-		mm, _ = m.activate("repo", name, dir)
+		mm, _ = m.activate(repoName, name, dir)
 		m = mm.(Model)
 	}
 	m.screen = screenEditor
@@ -104,5 +115,33 @@ func TestAgentStripOff(t *testing.T) {
 	m.agentStrip = false
 	if s, _ := m.agentStripLayout(); s != "" {
 		t.Fatalf("strip should be empty when off: %q", s)
+	}
+}
+
+func TestAgentStripGroupsByRepo(t *testing.T) {
+	m := stripModelKeys(t, 140, "front/zeta", "back/alpha", "front/beta")
+	row := barFirstRow(m)
+	want := "front: beta · zeta │ back: alpha"
+	if !strings.Contains(row, want) {
+		t.Fatalf("strip should group worktrees under their repo, want %q in %q", want, row)
+	}
+
+	// One repo needs no repo name.
+	m = stripModel(t, 140, "alpha", "beta")
+	if row := barFirstRow(m); strings.Contains(row, "repo:") {
+		t.Fatalf("a single repo should not be named: %q", row)
+	}
+}
+
+func TestAgentStripDropsRepoNamesFirst(t *testing.T) {
+	m := stripModelKeys(t, 140, "front/zeta", "back/alpha", "front/beta")
+	// Narrow the bar until the repo names no longer fit.
+	row := barFirstRow(m)
+	for strings.Contains(row, "front:") && m.width > 40 {
+		m.width--
+		row = barFirstRow(m)
+	}
+	if !strings.Contains(row, "beta · zeta · alpha") {
+		t.Fatalf("repo names should go before worktree names: %q", row)
 	}
 }

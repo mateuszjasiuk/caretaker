@@ -759,9 +759,13 @@ func ValidateWorktreeName(name string) error {
 // branch, based on baseRef. If baseRef is empty and the repository has an origin,
 // the primary worktree's branch is fetched and origin/<branch> is used. Repos
 // without an origin retain the local-only behavior of branching from HEAD.
-// Returns the created Worktree.
+// If the branch already exists locally, it is checked out as-is and baseRef is
+// ignored. Returns the created Worktree.
 func CreateWorktree(r Repo, relPath, branch, baseRef string) (Worktree, error) {
-	if baseRef == "" {
+	_, err := Git(r.Path, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	branchExists := err == nil
+
+	if baseRef == "" && !branchExists {
 		if _, err := Git(r.Path, "remote", "get-url", "origin"); err == nil {
 			wts, err := ListWorktrees(r)
 			if err != nil {
@@ -783,9 +787,14 @@ func CreateWorktree(r Repo, relPath, branch, baseRef string) (Worktree, error) {
 		return Worktree{}, fmt.Errorf("creating worktree parent dir: %w", err)
 	}
 
-	args := []string{"worktree", "add", "-b", branch, abs}
-	if baseRef != "" {
-		args = append(args, baseRef)
+	var args []string
+	if branchExists {
+		args = []string{"worktree", "add", abs, branch}
+	} else {
+		args = []string{"worktree", "add", "-b", branch, abs}
+		if baseRef != "" {
+			args = append(args, baseRef)
+		}
 	}
 	if _, err := Git(r.Path, args...); err != nil {
 		return Worktree{}, err

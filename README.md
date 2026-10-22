@@ -130,7 +130,7 @@ prev_agent  = "f3"     # previous agent in the active worktree
 global_config = "alt+g" # open the home-directory workspace
 orchestrator = "alt+o" # open the orchestrator agent (see below)
 attention   = "alt+n"  # jump to the agent needing attention (cycles on repeat)
-dismiss     = "ctrl+q" # clear the current worktree's "your turn" (white in the bar)
+highlight   = "ctrl+q" # toggle the current worktree white/dim in the bar
 back        = "alt+b"  # return to the previous work location (toggles on repeat)
 usage       = "alt+u"  # plan usage for enabled agent providers
 help        = "f1"     # toggle the key/legend overlay (also "?" in the deck)
@@ -367,9 +367,11 @@ agent, `enter` focuses one, `r` restarts it in place, `d` removes it, and `x` di
 
 The bar lists every open worktree after its icons, in a fixed order, coloured by what its agents
 are doing: yellow while working, green `✓` when done and unread, red `!` when waiting for you, and
-dim when idle. Once you have looked at a finished agent it turns white ("your turn" in the board)
-and stays white until it works again or you dismiss it with **`ctrl+q`** (current worktree) or `x`
-in the board. The current worktree is underlined. Click a name to jump there. With more than one
+dim when idle. White means "look at this". A finished agent you have looked at turns white
+("your turn" in the board) until it works again. **`ctrl+q`** toggles the current worktree between
+white and dim: use it to dismiss a "your turn", or to flag any worktree you want to come back to.
+A worktree you flag stays white until you press `ctrl+q` again. `x` in the board dismisses one
+agent's "your turn". The current worktree is underlined. Click a name to jump there. With more than one
 repo open, each repo's worktrees follow its name (`front: beta · zeta │ back: alpha`); the repo
 names are hidden first when the bar is short of space.
 

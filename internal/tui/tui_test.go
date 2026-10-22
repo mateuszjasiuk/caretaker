@@ -1452,8 +1452,8 @@ func TestSeenMarkerLifecycle(t *testing.T) {
 		t.Error("a busy agent should lose its seen marker")
 	}
 
-	// The dismiss key drops seen markers of the current worktree only, and
-	// leaves an unread marker alone.
+	// The highlight key on a white worktree drops seen markers of the current
+	// worktree only, and leaves an unread marker alone.
 	m.attention = map[int]attnEntry{
 		1: {level: attnSeen, key: "r/a"},
 		2: {level: attnSeen, key: "r/b"},
@@ -1462,10 +1462,32 @@ func TestSeenMarkerLifecycle(t *testing.T) {
 	mm, _ = m.handleKey(ctrlKey('q'))
 	m = mm.(Model)
 	if _, ok := m.attention[1]; ok {
-		t.Error("dismiss should drop the current worktree's seen marker")
+		t.Error("highlight should drop the current worktree's seen marker")
 	}
 	if m.attention[2].level != attnSeen || m.attention[3].level != attnDone {
-		t.Errorf("dismiss should leave other markers alone, got %v", m.attention)
+		t.Errorf("highlight should leave other markers alone, got %v", m.attention)
+	}
+	if m.highlighted["r/a"] {
+		t.Error("turning a seen worktree dim should not flag it")
+	}
+
+	// On a dim worktree it flags it; the flag survives a new turn and the next
+	// press removes it.
+	m.attention = map[int]attnEntry{}
+	mm, _ = m.handleKey(ctrlKey('q'))
+	m = mm.(Model)
+	if !m.highlighted["r/a"] {
+		t.Fatal("highlight on a dim worktree should flag it")
+	}
+	mm, _ = m.update(statusMsg{byPid: map[int]AgentStatus{1: {Status: "busy", Cwd: "/r/a"}}})
+	m = mm.(Model)
+	if !m.highlighted["r/a"] {
+		t.Error("a new turn should keep the flag")
+	}
+	mm, _ = m.handleKey(ctrlKey('q'))
+	m = mm.(Model)
+	if m.highlighted["r/a"] {
+		t.Error("a second press should remove the flag")
 	}
 
 	// Seen agents don't count for the attention jump.

@@ -200,7 +200,7 @@ After the bar icons, a faint `â”‚` and then every open worktree, separated by `Â
 
 ### Notifications and attention
 
-Notifications are work routing, not a feed. Aggregate them in the bar, identify urgency by glyph and count, and make the summary actionable. Visiting the relevant agent acknowledges unread completion; merely passing through unrelated views does not. An acknowledged completion stays marked as "your turn" until the agent works again or the user dismisses it. Bells and visual signals should be configurable and rate-limited.
+Notifications are work routing, not a feed. Aggregate them in the bar, identify urgency by glyph and count, and make the summary actionable. Visiting the relevant agent acknowledges unread completion; merely passing through unrelated views does not. An acknowledged completion stays marked as "your turn" until the agent works again or the user dismisses it. The user can also flag a worktree by hand; the flag stays until they remove it. Bells and visual signals should be configurable and rate-limited.
 
 ## Accessibility standard
 

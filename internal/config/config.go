@@ -264,7 +264,7 @@ func Default() Config {
 			GotoEditor: "alt+1", GotoAgent: "alt+2", GotoTerm: "alt+3",
 			Picker:  "ctrl+g",
 			Palette: "alt+a", NextAgent: "f4", PrevAgent: "f3",
-			Help: "f1", GlobalConfig: "alt+g", Orchestrator: "alt+o", Attention: "alt+n", Dismiss: "alt+e", Back: "alt+b",
+			Help: "f1", GlobalConfig: "alt+g", Orchestrator: "alt+o", Attention: "alt+n", Dismiss: "ctrl+q", Back: "alt+b",
 			TermSplitV: "alt+v", TermSplitH: "alt+s",
 			TermZoom: "alt+z", TermClose: "alt+x",
 			TermFocusLeft: "alt+h", TermFocusDown: "alt+j",

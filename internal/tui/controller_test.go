@@ -3,11 +3,13 @@ package tui
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/KCaverly/caretaker/internal/agent"
 	"github.com/KCaverly/caretaker/internal/config"
+	"github.com/KCaverly/caretaker/internal/repo"
 )
 
 func TestParseAgentStatuses(t *testing.T) {
@@ -378,4 +380,35 @@ func equalProviders(a, b []agent.Provider) bool {
 		}
 	}
 	return true
+}
+
+// TestControllerCreateFlattensSlashedName checks that "feature/foo" keeps its
+// branch name but gets a flat worktree folder.
+func TestControllerCreateFlattensSlashedName(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-b", "main"},
+		{"config", "user.email", "t@t.t"},
+		{"config", "user.name", "t"},
+		{"commit", "--allow-empty", "-m", "initial"},
+	} {
+		if _, err := repo.Git(dir, args...); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+
+	c := NewController(config.Default())
+	wt, err := c.Create(repo.Repo{Name: "demo", Path: dir}, "feature/foo", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, ".worktrees", "feature-foo"); wt.Path != want {
+		t.Fatalf("path = %q, want %q", wt.Path, want)
+	}
+	if wt.Branch != "feature/foo" {
+		t.Fatalf("branch = %q, want feature/foo", wt.Branch)
+	}
 }

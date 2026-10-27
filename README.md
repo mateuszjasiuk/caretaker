@@ -162,8 +162,8 @@ charset = "dots"    # dots (braille) | shade | blocks
 speed   = 0.3       # animation rate; 0 freezes the pattern
 width   = 40        # percent of the terminal width; 0 disables the panel
 
-# The orchestrator: a Claude agent in a repo's main checkout that manages work
-# across its worktrees through `ct ctl` (see "Orchestrator" below).
+# The orchestrator: one Claude agent per ct that manages work across every
+# repo's worktrees through `ct ctl` (see "Orchestrator" below).
 [orchestrator]
 # Claude model for the orchestrator, passed as --model. It coordinates rather
 # than codes, so the default is the cheaper one.
@@ -217,31 +217,39 @@ args = ["exec", "--", "codex"]
 
 ## Orchestrator
 
-The orchestrator is a Claude agent that sees every worktree and can start,
-message, and stop the agents working in them. It is an ordinary agent in the
-repo's main checkout, the `(main)` row of the deck, with two differences: its
-system prompt describes `ct ctl` and the rules below, and it runs on the model
-from `[orchestrator]` (`sonnet` by default). It is not listed in the agent
-board or the bar's agent strip; the orchestrator icon stands for it. It resumes
-its conversation across runs.
+The orchestrator is a Claude agent that sees every worktree of every repo and
+can start, message, and stop the agents working in them. There is one per ct.
+It runs in its own folder, `~/.caretaker/orchestrator/`, outside every repo,
+and each repo's main checkout is added with `--add-dir`, so it can read the
+code when it plans a task. Its system prompt describes `ct ctl`, lists the
+repos, and sets the rules below; it runs on the model from `[orchestrator]`
+(`sonnet` by default). It is not listed in the agent board or the bar's agent
+strip; the orchestrator icon stands for it. It resumes its conversation across
+runs.
+
+The repo list is fixed when the session starts. After you add a repo, pick
+"new orchestrator session" (or restart ct) so the orchestrator knows about it.
+
+A repo's main checkout, the `(main)` row of the deck, is an ordinary worktree:
+open it to get a plain agent on the main branch.
 
 Press `alt+o`, click the orchestrator icon in the bar's tab row (between the
 agent and terminal icons), or pick "open orchestrator" in the command palette
 to show it. The icon is always there and lights up while the orchestrator view
 is showing. The view lays over your current worktree, which stays current: the
 jump and cycle keys lead back to its editor, agent, and terminal, and `alt+o`
-again returns to the view you came from. Behind the scenes ct opens the main
-checkout of the current repo (or the repo selected on the deck) in the
-background and starts the orchestrator agent there the first time. Nothing
+again returns to the view you came from. Behind the scenes ct opens the
+orchestrator's workspace in the background and starts the orchestrator agent
+there the first time. Nothing
 pushes events into it: you talk to it when you want coordination, such as
 spawning worktrees for a batch of tasks, briefing an agent, or getting an
 overview of what is running.
 
-Its plan lives outside the repo in `~/.caretaker/orchestrator/<repo>/tasks.md`,
-one line per task with the worktree and its state. That file, not the
-conversation, is its memory. When the conversation gets long, pick "new
+Its plan lives outside the repos, one file per repo:
+`~/.caretaker/orchestrator/<repo>/tasks.md`, one line per task with the
+worktree and its state. Those files, not the conversation, are its memory. When the conversation gets long, pick "new
 orchestrator session" in the palette: it replaces the session with a fresh one
-that reads `tasks.md` and carries on.
+that reads the `tasks.md` files and carries on.
 
 The orchestrator acts on ct through `ct ctl`, a command that talks to the
 running ct over a Unix socket. You can use it too, from any terminal:

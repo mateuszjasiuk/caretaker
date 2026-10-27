@@ -437,11 +437,10 @@ type Model struct {
 	// home workspace path/key, cached on first open for pathToKey lookups
 	homeWSPath string
 	homeWSKey  string
-	// orchKey is the main-checkout workspace whose orchestrator the
-	// orchestrator view shows; orchFrom is the view it was opened from.
-	orchKey  string
-	orchFrom screen
-	// orchestrator workspace path/key, set on first open like the home ones
+	// orchWSPath is the orchestrator workspace's folder, set on first open
+	// like the home one; orchFrom is the view the orchestrator was opened from.
+	orchWSPath string
+	orchFrom   screen
 
 	// ctlSrv is the control socket `ct ctl` talks to; nil in tests. queueSent
 	// records when each workspace last had a queued message delivered, so the
@@ -1182,11 +1181,10 @@ func (m *Model) syncFocus() {
 }
 
 // screenDir is the folder of the session on screen: the current worktree's,
-// or the main checkout's for the orchestrator.
+// or the orchestrator's own folder.
 func (m Model) screenDir() string {
 	if m.screen == screenOrchestrator {
-		dir, _ := m.worktreePath(m.orchKey)
-		return dir
+		return m.orchWSPath
 	}
 	if m.current == nil {
 		return ""
@@ -1286,9 +1284,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			w, h := m.sessionSize()
 			m.mgr.ResizeWorkspace(m.current.key, w, h)
 		}
-		if m.screen == screenOrchestrator && m.orchKey != "" {
+		if m.screen == screenOrchestrator && m.mgr.Has(orchestratorKey) {
 			w, h := m.sessionSize()
-			m.mgr.ResizeWorkspace(m.orchKey, w, h)
+			m.mgr.ResizeWorkspace(orchestratorKey, w, h)
 		}
 		return m, nil
 
@@ -3091,10 +3089,7 @@ func (m Model) activateWithoutHistory(repoName, wtName, dir string) (tea.Model, 
 // selected agent is the only one created.
 func (m Model) workspaceSpecs(key string, addDefault bool) ([]session.Spec, error) {
 	specs := []session.Spec{m.ctrl.EditorSpec()}
-	var saved []state.AgentState
-	if m.state != nil {
-		saved, _ = m.state.Agents(key)
-	}
+	saved, _ := m.savedAgents(key)
 	if len(saved) == 0 && addDefault {
 		spec, err := m.ctrl.NewProviderAgentSpec(m.defaultAgentProvider, "", "")
 		if err != nil {
@@ -3118,7 +3113,7 @@ func (m Model) workspaceSpecs(key string, addDefault bool) ([]session.Spec, erro
 func (m Model) restoreAgentSpec(key string, a state.AgentState, prompt string) (session.Spec, error) {
 	provider := normalizedProvider(a.Provider)
 	if a.Role == orchestratorRole && provider == agent.Claude {
-		return m.ctrl.OrchestratorAgentSpec(repoOfKey(key), a.SessionID, a.Label)
+		return m.ctrl.OrchestratorAgentSpec(m.orchestratorRepos(), a.SessionID, a.Label)
 	}
 	return m.ctrl.RestoreProviderAgentSpec(provider, a.SessionID, a.Label, prompt)
 }
@@ -3157,11 +3152,45 @@ func closeSpecCompanions(specs []session.Spec) {
 
 // savedActiveAgent returns the focused-agent index persisted for key, or 0.
 func (m Model) savedActiveAgent(key string) int {
-	if m.state == nil {
-		return 0
-	}
-	_, active := m.state.Agents(key)
+	_, active := m.savedAgents(key)
 	return active
+}
+
+// onlyOldOrchestrators reports whether key's saved pool held agents and every
+// one was an orchestrator that savedAgents leaves out.
+func (m Model) onlyOldOrchestrators(key string) bool {
+	if m.state == nil || key == orchestratorKey {
+		return false
+	}
+	all, _ := m.state.Agents(key)
+	kept, _ := m.savedAgents(key)
+	return len(all) > 0 && len(kept) == 0
+}
+
+// savedAgents is key's saved agent pool and its focused index. Orchestrators
+// saved outside the orchestrator workspace are left out: they come from when
+// each repo's main checkout ran its own, and that checkout now opens like any
+// other worktree.
+func (m Model) savedAgents(key string) ([]state.AgentState, int) {
+	if m.state == nil {
+		return nil, 0
+	}
+	saved, active := m.state.Agents(key)
+	if key == orchestratorKey {
+		return saved, active
+	}
+	kept := saved[:0:0]
+	keptActive := 0
+	for i, a := range saved {
+		if a.Role == orchestratorRole {
+			continue
+		}
+		if i <= active {
+			keptActive = len(kept)
+		}
+		kept = append(kept, a)
+	}
+	return kept, keptActive
 }
 
 // persistAgents snapshots a live workspace's agent pool (resume ids, labels, and
@@ -3271,14 +3300,27 @@ func (m Model) restoreSessions() (Model, tea.Cmd) {
 			}
 			m.homeWSPath, m.homeWSKey, path, ok = home, key, home, true
 		}
+		if key == orchestratorKey {
+			dir, err := m.ctrl.EnsureOrchestratorDir()
+			if err != nil {
+				m.setError("restore error: " + err.Error())
+				continue
+			}
+			m.orchWSPath, path, ok = dir, dir, true
+		}
 		if !ok {
 			continue // the worktree is gone
+		}
+		if m.onlyOldOrchestrators(key) {
+			continue // it was open only for the orchestrator that used to live there
 		}
 		var (
 			cmd tea.Cmd
 			err error
 		)
-		if m, cmd, err = m.openWorkspaceBackground(key, path, true); err != nil {
+		// The orchestrator workspace holds only the orchestrator, never a
+		// default agent.
+		if m, cmd, err = m.openWorkspaceBackground(key, path, key != orchestratorKey); err != nil {
 			m.setError("restore error (" + key + "): " + err.Error())
 			continue
 		}
@@ -5294,6 +5336,9 @@ func (m Model) pathToKey(path string) (string, bool) {
 	if m.homeWSPath != "" && filepath.Clean(m.homeWSPath) == path {
 		return m.homeWSKey, true
 	}
+	if m.orchWSPath != "" && filepath.Clean(m.orchWSPath) == path {
+		return orchestratorKey, true
+	}
 	return "", false
 }
 
@@ -5324,6 +5369,11 @@ func (m Model) agentLocation(target *session.Session) (key, path string, ok bool
 	}
 	if m.homeWSKey != "" {
 		if key, path, ok := match(m.homeWSKey, m.homeWSPath); ok {
+			return key, path, true
+		}
+	}
+	if m.orchWSPath != "" {
+		if key, path, ok := match(orchestratorKey, m.orchWSPath); ok {
 			return key, path, true
 		}
 	}

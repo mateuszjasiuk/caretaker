@@ -95,6 +95,11 @@ func parseCtlArgs(args []string) (req ctl.Request, asJSON bool, err error) {
 			if err != nil {
 				return req, false, err
 			}
+			// "--prompt -" reads stdin, like a bare "-".
+			if v == "-" {
+				readStdin = true
+				continue
+			}
 			text = &v
 		case "-n", "--lines":
 			v, err := next(a)

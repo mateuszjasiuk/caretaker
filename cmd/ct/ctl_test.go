@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"testing"
 
 	"github.com/KCaverly/caretaker/internal/ctl"
@@ -45,6 +46,33 @@ func TestParseCtlArgs(t *testing.T) {
 		}
 		if got != tc.want || asJSON != tc.json {
 			t.Errorf("%v: got %+v json=%v, want %+v json=%v", tc.args, got, asJSON, tc.want, tc.json)
+		}
+	}
+}
+
+// TestParseCtlArgsStdin checks that both "-" and "--prompt -" read the text
+// from stdin, not take "-" as the text.
+func TestParseCtlArgsStdin(t *testing.T) {
+	for _, args := range [][]string{
+		{"spawn", "r", "fix-it", "--prompt", "-"},
+		{"spawn", "r", "fix-it", "-"},
+	} {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.WriteString("review the diff\n")
+		w.Close()
+		old := os.Stdin
+		os.Stdin = r
+		got, _, err := parseCtlArgs(args)
+		os.Stdin = old
+		r.Close()
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if got.Text != "review the diff" {
+			t.Errorf("%v: text = %q, want %q", args, got.Text, "review the diff")
 		}
 	}
 }

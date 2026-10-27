@@ -813,17 +813,85 @@ func RemoveWorktree(r Repo, wt Worktree, deleteBranch bool) error {
 	if wt.IsMain {
 		return fmt.Errorf("refusing to remove the primary worktree")
 	}
-	// --force so removal works even when the worktree has uncommitted or
-	// untracked changes; the caller confirms this destructive action.
-	if _, err := Git(r.Path, "worktree", "remove", "--force", wt.Path); err != nil {
+	// `git worktree remove` deletes file by file, which for a worktree with
+	// big node_modules folders outlasts gitTimeout. Instead, move the folder
+	// aside (instant, same filesystem), let `git worktree prune` drop the
+	// now-missing worktree, and delete the folder in the background. Like
+	// remove --force, this discards uncommitted and untracked changes; the
+	// caller confirms this destructive action.
+	// prune skips locked worktrees, so refuse those before moving anything.
+	if locked, err := worktreeLocked(r, wt.Path); err != nil {
+		return err
+	} else if locked {
+		return fmt.Errorf("worktree %s is locked; run `git worktree unlock` first", wt.Path)
+	}
+	trash, err := os.MkdirTemp(filepath.Dir(wt.Path), "."+filepath.Base(wt.Path)+".removing-")
+	if err != nil {
 		return err
 	}
+	moved := filepath.Join(trash, filepath.Base(wt.Path))
+	if err := os.Rename(wt.Path, moved); err != nil {
+		os.Remove(trash)
+		// A folder that is already gone only needs the prune below.
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	if _, err := Git(r.Path, "worktree", "prune"); err != nil {
+		os.Rename(moved, wt.Path)
+		os.Remove(trash)
+		return err
+	}
+	deleteInBackground(trash)
 	if deleteBranch && wt.Branch != "" {
 		if _, err := Git(r.Path, "branch", "-D", wt.Branch); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// worktreeLocked reports whether `git worktree list` marks the worktree at
+// path as locked. Paths are compared with symlinks resolved, because git
+// prints them resolved (e.g. /private/var rather than /var on macOS).
+func worktreeLocked(r Repo, path string) (bool, error) {
+	out, err := Git(r.Path, "worktree", "list", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	want := resolvePath(path)
+	inTarget := false
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimRight(line, "\r")
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			inTarget = resolvePath(strings.TrimPrefix(line, "worktree ")) == want
+		case inTarget && (line == "locked" || strings.HasPrefix(line, "locked ")):
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// resolvePath returns path with symlinks resolved, or path unchanged when it
+// cannot be resolved (for example, because it no longer exists).
+func resolvePath(path string) string {
+	if p, err := filepath.EvalSymlinks(path); err == nil {
+		return p
+	}
+	return path
+}
+
+// deleteInBackground removes dir without making the caller wait. It runs
+// `rm -rf` as a separate process so the delete finishes even if ct quits
+// first; where rm is missing it falls back to a goroutine.
+func deleteInBackground(dir string) {
+	cmd := exec.Command("rm", "-rf", dir)
+	if err := cmd.Start(); err != nil {
+		go os.RemoveAll(dir)
+		return
+	}
+	go cmd.Wait() // reap the process when it exits
 }
 
 // gitTimeout bounds every git subprocess so a hung call — a credential helper

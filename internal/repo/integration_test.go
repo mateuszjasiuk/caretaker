@@ -324,6 +324,66 @@ func TestRemoveWorktreeKeepsBranch(t *testing.T) {
 	}
 }
 
+// TestRemoveWorktreeMovesAside verifies the worktree folder is gone as soon as
+// RemoveWorktree returns (it is deleted in the background from a hidden
+// sibling folder), and that a locked worktree is refused and left in place.
+func TestRemoveWorktreeMovesAside(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	repoDir := filepath.Join(t.TempDir(), "demo")
+	if err := os.Mkdir(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit := func(args ...string) {
+		t.Helper()
+		if _, err := Git(repoDir, args...); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+	runGit("init", "-b", "main")
+	runGit("config", "user.email", "t@t.t")
+	runGit("config", "user.name", "t")
+	runGit("commit", "-m", "init", "--allow-empty")
+
+	r := Repo{Name: "demo", Path: repoDir}
+	wt, err := CreateWorktree(r, ".worktrees/feat", "feat", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Untracked files must not stop the removal.
+	if err := os.WriteFile(filepath.Join(wt.Path, "scratch"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A locked worktree is kept, folder included.
+	runGit("worktree", "lock", wt.Path)
+	if err := RemoveWorktree(r, wt, true); err == nil {
+		t.Fatal("expected an error removing a locked worktree")
+	}
+	if _, err := os.Stat(filepath.Join(wt.Path, "scratch")); err != nil {
+		t.Fatalf("locked worktree folder should be restored: %v", err)
+	}
+	if wts, _ := ListWorktrees(r); len(wts) != 2 {
+		t.Fatalf("locked worktree should still be listed, got %+v", wts)
+	}
+
+	runGit("worktree", "unlock", wt.Path)
+	if err := RemoveWorktree(r, wt, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(wt.Path); !os.IsNotExist(err) {
+		t.Fatalf("worktree folder should be gone right away, stat err=%v", err)
+	}
+	if wts, _ := ListWorktrees(r); len(wts) != 1 {
+		t.Fatalf("expected only main worktree after remove, got %+v", wts)
+	}
+	if tips, _, _ := BranchTips(r, "main"); func() bool { _, ok := tips["feat"]; return ok }() {
+		t.Fatal("branch feat should be deleted")
+	}
+}
+
 // commitDiffRepo builds a throwaway git repo with two commits: a root commit
 // adding greet.txt, then a tip commit that rewrites one of its lines and adds a
 // second file. It returns the repo dir plus the root and tip SHAs.

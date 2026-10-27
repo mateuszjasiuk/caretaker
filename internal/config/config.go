@@ -67,9 +67,9 @@ type Config struct {
 	Orchestrator Orchestrator `toml:"orchestrator"`
 }
 
-// Orchestrator configures the orchestrator agent: a Claude session in a
-// repo's main checkout that sees every worktree through `ct ctl` and can
-// start, message, and stop the agents working in them.
+// Orchestrator configures the orchestrator agent: one Claude session per ct,
+// in its own folder, that sees every repo's worktrees through `ct ctl` and
+// can start, message, and stop the agents working in them.
 type Orchestrator struct {
 	// Model is the claude model the orchestrator runs on, passed as --model.
 	// It coordinates rather than codes, so a cheaper model is the default.

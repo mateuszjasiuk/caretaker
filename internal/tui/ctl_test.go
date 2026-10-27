@@ -10,6 +10,7 @@ import (
 	"github.com/KCaverly/caretaker/internal/ctl"
 	"github.com/KCaverly/caretaker/internal/repo"
 	"github.com/KCaverly/caretaker/internal/session"
+	"github.com/KCaverly/caretaker/internal/state"
 )
 
 func TestClaudeProjectName(t *testing.T) {
@@ -184,25 +185,41 @@ func TestQueueStateRoundTrip(t *testing.T) {
 	}
 }
 
-func TestOrchestratorRepoAndMainWorktree(t *testing.T) {
+func TestOrchestratorReposListEveryRepo(t *testing.T) {
 	m := ctlModel(t)
-	m.screen = screenPicker
-	g, ok := m.orchestratorRepo()
-	if !ok || g.Repo.Name != "r" {
-		t.Fatalf("single repo should be picked without a selection: %v %v", g.Repo.Name, ok)
-	}
-	main, ok := mainWorktree(g)
-	if !ok || main.WT.Path != "/r" {
-		t.Fatalf("main worktree = %v %v", main.WT.Path, ok)
-	}
 	m.groups = append(m.groups, Group{Repo: repo.Repo{Name: "s", Path: "/s"}})
-	m.activeCursor = -1 // nothing selected on the deck
-	if _, ok := m.orchestratorRepo(); ok {
-		t.Fatal("two repos and nothing selected should not pick one")
+	got := m.orchestratorRepos()
+	want := []OrchestratorRepo{{Name: "r", Path: "/r"}, {Name: "s", Path: "/s"}}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("repos = %v, want %v", got, want)
 	}
-	m.current = &workspaceRef{repo: "s", worktree: "x", key: "s/x"}
-	if g, ok := m.orchestratorRepo(); !ok || g.Repo.Name != "s" {
-		t.Fatalf("current workspace's repo should win: %v %v", g.Repo.Name, ok)
+}
+
+// TestSavedAgentsDropOldOrchestrators checks that an orchestrator saved in a
+// main checkout's pool (from when each repo ran its own) is not restored
+// there, and that the focused agent still points at the same agent.
+func TestSavedAgentsDropOldOrchestrators(t *testing.T) {
+	m := ctlModel(t)
+	pool := []state.AgentState{
+		{Provider: "claude", SessionID: "o", Role: orchestratorRole},
+		{Provider: "claude", SessionID: "a"},
+		{Provider: "claude", SessionID: "b"},
+	}
+	m.state.SetAgents("r/(main)", pool, 2)
+	saved, active := m.savedAgents("r/(main)")
+	if len(saved) != 2 || saved[0].SessionID != "a" || saved[active].SessionID != "b" {
+		t.Fatalf("saved = %+v active = %d", saved, active)
+	}
+	if m.onlyOldOrchestrators("r/(main)") {
+		t.Fatal("a pool with plain agents should be restored")
+	}
+	m.state.SetAgents("r/a", pool[:1], 0)
+	if !m.onlyOldOrchestrators("r/a") {
+		t.Fatal("a pool with only an old orchestrator should not be restored")
+	}
+	m.state.SetAgents(orchestratorKey, pool[:1], 0)
+	if saved, _ := m.savedAgents(orchestratorKey); len(saved) != 1 || saved[0].Role != orchestratorRole {
+		t.Fatalf("orchestrator workspace lost its orchestrator: %+v", saved)
 	}
 }
 
@@ -212,7 +229,7 @@ func TestOrchestratorAgentSpecCarriesRoleModelAndNotes(t *testing.T) {
 	cfg := config.Default()
 	cfg.Agent = "claude"
 	c := NewController(cfg)
-	spec, err := c.OrchestratorAgentSpec("r", "", "")
+	spec, err := c.OrchestratorAgentSpec([]OrchestratorRepo{{Name: "r", Path: "/r"}, {Name: "s", Path: "/s"}}, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,12 +237,19 @@ func TestOrchestratorAgentSpecCarriesRoleModelAndNotes(t *testing.T) {
 		t.Fatalf("spec role/title = %q %q", spec.Role, spec.Title)
 	}
 	argv := strings.Join(spec.Argv, " ")
-	tasks := filepath.Join(cfgDir, "orchestrator", "r", "tasks.md")
-	if !strings.Contains(argv, "--model sonnet") || !strings.Contains(argv, tasks) {
-		t.Fatalf("argv missing model or notes path: %s", argv)
+	for _, want := range []string{"--model sonnet", "--add-dir /r", "--add-dir /s", filepath.Join(cfgDir, "orchestrator")} {
+		if !strings.Contains(argv, want) {
+			t.Fatalf("argv missing %q: %s", want, argv)
+		}
 	}
-	if _, err := os.Stat(tasks); err != nil {
-		t.Fatalf("tasks.md not seeded: %v", err)
+	for _, r := range []string{"r", "s"} {
+		tasks := filepath.Join(cfgDir, "orchestrator", r, "tasks.md")
+		if !strings.Contains(argv, tasks) {
+			t.Fatalf("instructions do not name %s", tasks)
+		}
+		if _, err := os.Stat(tasks); err != nil {
+			t.Fatalf("tasks.md not seeded: %v", err)
+		}
 	}
 	if idx := orchestratorIndex(&session.Workspace{Agents: []*session.Session{{}, {Role: orchestratorRole}}}); idx != 1 {
 		t.Fatalf("orchestratorIndex = %d, want 1", idx)

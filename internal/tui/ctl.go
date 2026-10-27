@@ -12,7 +12,6 @@ import (
 	"github.com/KCaverly/caretaker/internal/ctl"
 	"github.com/KCaverly/caretaker/internal/repo"
 	"github.com/KCaverly/caretaker/internal/session"
-	"github.com/KCaverly/caretaker/internal/state"
 )
 
 // The control socket lets `ct ctl` (and through it the orchestrator agent) act
@@ -348,11 +347,7 @@ func (m Model) activateBackground(key, dir string, specs []session.Spec) (Model,
 // to its focused agent, or one fresh agent of provider is started on it.
 func (m Model) workspaceSpecsWithPrompt(key string, provider agent.Provider, prompt string) ([]session.Spec, error) {
 	specs := []session.Spec{m.ctrl.EditorSpec()}
-	var saved []state.AgentState
-	active := 0
-	if m.state != nil {
-		saved, active = m.state.Agents(key)
-	}
+	saved, active := m.savedAgents(key)
 	if len(saved) == 0 {
 		spec, err := m.ctrl.NewProviderAgentSpec(provider, randomAgentTitle(), prompt)
 		if err != nil {
@@ -644,61 +639,20 @@ func (m Model) showCtlRemove() Model {
 	return m
 }
 
-// orchestratorRepo picks the repo whose orchestrator the user means: the
-// current workspace's repo, else the deck selection, else the only repo.
-func (m Model) orchestratorRepo() (Group, bool) {
-	var name string
-	switch {
-	case m.current != nil && m.current.key != m.homeWSKey:
-		name = m.current.repo
-	case m.screen == screenPicker:
-		if it, ok := m.selectedActive(); ok {
-			name = it.repo.Name
-		}
-	}
-	if name == "" && len(m.groups) == 1 {
-		name = m.groups[0].Repo.Name
-	}
+// orchestratorRepos lists every repo on the deck with its main checkout,
+// for the orchestrator's instructions and --add-dir.
+func (m Model) orchestratorRepos() []OrchestratorRepo {
+	repos := make([]OrchestratorRepo, 0, len(m.groups))
 	for _, g := range m.groups {
-		if g.Repo.Name == name {
-			return g, true
-		}
+		repos = append(repos, OrchestratorRepo{Name: g.Repo.Name, Path: g.Repo.Path})
 	}
-	return Group{}, false
+	return repos
 }
 
-// orchestratorHome resolves where the orchestrator the user means runs: the
-// repo, and its main checkout's workspace key and path. msg explains a
-// failure in a line for the flash bar.
-func (m Model) orchestratorHome() (repoName, key, dir, msg string) {
-	g, ok := m.orchestratorRepo()
-	if !ok {
-		return "", "", "", "select a repo on the deck first"
-	}
-	main, ok := mainWorktree(g)
-	if !ok {
-		return "", "", "", "no main checkout found for " + g.Repo.Name
-	}
-	return g.Repo.Name, wsKey(g.Repo.Name, main.WT.Name), main.WT.Path, ""
-}
-
-// mainWorktree returns the repo's main checkout, where its orchestrator runs.
-func mainWorktree(g Group) (WorktreeView, bool) {
-	for _, wv := range g.Worktrees {
-		if wv.WT.IsMain {
-			return wv, true
-		}
-	}
-	return WorktreeView{}, false
-}
-
-// orchestratorSession is the orchestrator agent being shown, or nil before
-// its first use or after its workspace was closed.
+// orchestratorSession is the orchestrator agent, or nil before its first use
+// or after its workspace was closed.
 func (m Model) orchestratorSession() *session.Session {
-	if m.orchKey == "" {
-		return nil
-	}
-	ws, ok := m.mgr.Workspace(m.orchKey)
+	ws, ok := m.mgr.Workspace(orchestratorKey)
 	if !ok {
 		return nil
 	}
@@ -744,44 +698,41 @@ func (m Model) leaveOrchestrator() (tea.Model, tea.Cmd) {
 }
 
 // showOrchestrator shows the orchestrator over the current workspace, which
-// stays current: the jump and cycle keys lead back to it. The orchestrator
-// agent runs in the repo's main checkout, opened in the background when it
-// is not open yet, and started there when the workspace has none.
+// stays current: the jump and cycle keys lead back to it. There is one
+// orchestrator per ct, in its own workspace and folder; the workspace is
+// opened in the background when it is not open yet, and the orchestrator
+// started there when it has none.
 func (m Model) showOrchestrator() (tea.Model, tea.Cmd) {
 	if m.ctlSrv == nil {
 		return m, m.flashCmd("orchestrator needs the control socket, which did not start")
 	}
-	repoName, key, dir, msg := m.orchestratorHome()
-	if msg != "" {
-		return m, m.flashCmd(msg)
-	}
 	var cmds []tea.Cmd
-	if !m.mgr.Has(key) {
+	if !m.mgr.Has(orchestratorKey) {
+		dir, err := m.ctrl.EnsureOrchestratorDir()
+		if err != nil {
+			m.setError("orchestrator error: " + err.Error())
+			return m, nil
+		}
+		m.orchWSPath = dir
 		// No default agent: the orchestrator below is the one to start.
-		var (
-			cmd tea.Cmd
-			err error
-		)
-		if m, cmd, err = m.openWorkspaceBackground(key, dir, false); err != nil {
+		var cmd tea.Cmd
+		if m, cmd, err = m.openWorkspaceBackground(orchestratorKey, dir, false); err != nil {
 			m.setError("orchestrator error: " + err.Error())
 			return m, nil
 		}
 		cmds = append(cmds, cmd)
 	}
-	ws, _ := m.mgr.Workspace(key)
+	ws, _ := m.mgr.Workspace(orchestratorKey)
 	if orchestratorIndex(ws) < 0 {
-		spawned, err := m.spawnOrchestrator(repoName, key, dir)
+		spawned, err := m.spawnOrchestrator()
 		if err != nil {
 			m.setError("orchestrator error: " + err.Error())
 			return m, tea.Batch(cmds...)
 		}
-		cmds = append(cmds, m.saveAgents(key), m.watchAgentEvents(spawned), m.flashCmd("orchestrator started"))
+		cmds = append(cmds, m.saveAgents(orchestratorKey), m.watchAgentEvents(spawned), m.flashCmd("orchestrator started"))
 	}
-	if m.current == nil || m.current.key != key {
-		w, h := m.sessionSize()
-		m.mgr.ResizeWorkspace(key, w, h) // it may have sat through resizes in the background
-	}
-	m.orchKey = key
+	w, h := m.sessionSize()
+	m.mgr.ResizeWorkspace(orchestratorKey, w, h) // it may have sat through resizes in the background
 	if m.screen != screenOrchestrator {
 		m.orchFrom = m.screen
 	}
@@ -802,37 +753,35 @@ func (m Model) openWorkspaceBackground(key, dir string, addDefault bool) (Model,
 	return m.activateBackground(key, dir, specs)
 }
 
-// spawnOrchestrator adds a fresh orchestrator agent to the open workspace key.
-func (m Model) spawnOrchestrator(repoName, key, dir string) (*session.Session, error) {
-	spec, err := m.ctrl.OrchestratorAgentSpec(repoName, "", "")
+// spawnOrchestrator adds a fresh orchestrator agent to the open orchestrator
+// workspace.
+func (m Model) spawnOrchestrator() (*session.Session, error) {
+	spec, err := m.ctrl.OrchestratorAgentSpec(m.orchestratorRepos(), "", "")
 	if err != nil {
 		return nil, err
 	}
-	spec, err = m.prepareAgentSpec(dir, spec)
+	spec, err = m.prepareAgentSpec(m.orchWSPath, spec)
 	if err != nil {
 		return nil, err
 	}
 	w, h := m.sessionSize()
-	return m.mgr.SpawnAgent(key, dir, spec, w, h)
+	return m.mgr.SpawnAgent(orchestratorKey, m.orchWSPath, spec, w, h)
 }
 
-// resetOrchestrator starts the repo's orchestrator over with a fresh Claude
-// session: same instructions, empty context. tasks.md stays, so the new
-// session picks up from there. The old session is replaced in place; without
-// one this is the same as opening the orchestrator.
+// resetOrchestrator starts the orchestrator over with a fresh Claude session:
+// same instructions, empty context, and the deck's current repos. The
+// tasks.md files stay, so the new session picks up from there. The old
+// session is replaced in place; without one this is the same as opening the
+// orchestrator.
 func (m Model) resetOrchestrator() (tea.Model, tea.Cmd) {
-	repoName, key, dir, msg := m.orchestratorHome()
-	if msg != "" {
-		return m, m.flashCmd(msg)
-	}
-	ws, open := m.mgr.Workspace(key)
+	ws, open := m.mgr.Workspace(orchestratorKey)
 	idx := orchestratorIndex(ws)
 	if !open || idx < 0 {
 		return m.showOrchestrator()
 	}
-	spec, err := m.ctrl.OrchestratorAgentSpec(repoName, "", "")
+	spec, err := m.ctrl.OrchestratorAgentSpec(m.orchestratorRepos(), "", "")
 	if err == nil {
-		spec, err = m.prepareAgentSpec(dir, spec)
+		spec, err = m.prepareAgentSpec(m.orchWSPath, spec)
 	}
 	if err != nil {
 		m.setError("orchestrator restart error: " + err.Error())
@@ -840,7 +789,7 @@ func (m Model) resetOrchestrator() (tea.Model, tea.Cmd) {
 	}
 	old := ws.Agents[idx]
 	w, h := m.sessionSize()
-	replacement, err := m.mgr.ReplaceAgent(key, dir, idx, spec, w, h)
+	replacement, err := m.mgr.ReplaceAgent(orchestratorKey, m.orchWSPath, idx, spec, w, h)
 	if err != nil {
 		m.setError("orchestrator restart error: " + err.Error())
 		return m, nil
@@ -848,5 +797,5 @@ func (m Model) resetOrchestrator() (tea.Model, tea.Cmd) {
 	m.clearAgentTracking(old.Pid())
 	mm, cmd := m.showOrchestrator()
 	model := mm.(Model)
-	return model, tea.Batch(cmd, model.saveAgents(key), model.watchAgentEvents(replacement), model.flashCmd("orchestrator started over"))
+	return model, tea.Batch(cmd, model.saveAgents(orchestratorKey), model.watchAgentEvents(replacement), model.flashCmd("orchestrator started over"))
 }

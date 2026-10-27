@@ -303,23 +303,41 @@ func (c *Controller) RestoreSessions() bool { return c.cfg.RestoreSessions }
 // into words; nil when unset.
 func (c *Controller) FocusCommand() []string { return strings.Fields(c.cfg.FocusCommand) }
 
-// OrchestratorNotesDir is where the orchestrator for repoName keeps its
-// notes: "orchestrator/<repo>" next to the config file, outside the repo.
-func (c *Controller) OrchestratorNotesDir(repoName string) (string, error) {
+// OrchestratorDir is the orchestrator's own folder, "orchestrator" next to
+// the config file. It runs there, outside every repo, and keeps each repo's
+// notes in a subfolder named after the repo.
+func (c *Controller) OrchestratorDir() (string, error) {
 	cfgPath, err := config.Path()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(filepath.Dir(cfgPath), "orchestrator", repoName), nil
+	return filepath.Join(filepath.Dir(cfgPath), "orchestrator"), nil
+}
+
+// EnsureOrchestratorDir creates the orchestrator's folder and marks it
+// trusted, so its session starts without the trust prompt.
+func (c *Controller) EnsureOrchestratorDir() (string, error) {
+	dir, err := c.OrchestratorDir()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	if err := c.EnsureDirTrusted(dir); err != nil {
+		return "", err
+	}
+	return dir, nil
 }
 
 // EnsureOrchestratorNotes creates the notes directory for repoName and seeds
 // tasks.md when it is missing, and returns the path of tasks.md.
 func (c *Controller) EnsureOrchestratorNotes(repoName string) (string, error) {
-	dir, err := c.OrchestratorNotesDir(repoName)
+	base, err := c.OrchestratorDir()
 	if err != nil {
 		return "", err
 	}
+	dir := filepath.Join(base, repoName)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -333,19 +351,34 @@ func (c *Controller) EnsureOrchestratorNotes(repoName string) (string, error) {
 	return tasks, nil
 }
 
-// OrchestratorAgentSpec builds the orchestrator agent for repoName: a normal
-// ct-managed Claude session (fresh under id, or resumed when its transcript
-// exists) on the configured model, with the orchestrator instructions
-// appended to its system prompt. The instructions name this ct binary and
-// the repo's tasks.md.
-func (c *Controller) OrchestratorAgentSpec(repoName, id, label string) (session.Spec, error) {
+// OrchestratorRepo is a repo the orchestrator manages: its name and the path
+// of its main checkout.
+type OrchestratorRepo struct {
+	Name, Path string
+}
+
+// OrchestratorAgentSpec builds the orchestrator agent: a normal ct-managed
+// Claude session (fresh under id, or resumed when its transcript exists) on
+// the configured model, with the orchestrator instructions appended to its
+// system prompt. Each repo's main checkout is added with --add-dir so it can
+// read the code; the instructions name this ct binary and each repo's
+// tasks.md.
+func (c *Controller) OrchestratorAgentSpec(repos []OrchestratorRepo, id, label string) (session.Spec, error) {
 	providerCfg, err := c.providerConfig(agent.Claude)
 	if err != nil {
 		return session.Spec{}, err
 	}
-	tasks, err := c.EnsureOrchestratorNotes(repoName)
+	dir, err := c.OrchestratorDir()
 	if err != nil {
 		return session.Spec{}, err
+	}
+	notes := make([]orchestratorRepoNotes, 0, len(repos))
+	for _, r := range repos {
+		tasks, err := c.EnsureOrchestratorNotes(r.Name)
+		if err != nil {
+			return session.Spec{}, err
+		}
+		notes = append(notes, orchestratorRepoNotes{Name: r.Name, Path: r.Path, Tasks: tasks})
 	}
 	if id == "" {
 		id = newSessionID()
@@ -363,7 +396,10 @@ func (c *Controller) OrchestratorAgentSpec(repoName, id, label string) (session.
 	if model := c.cfg.Orchestrator.Model; model != "" {
 		spec.Argv = append(spec.Argv, "--model", model)
 	}
-	spec.Argv = append(spec.Argv, "--append-system-prompt", orchestratorSystemPrompt(ctCommand(), tasks))
+	for _, r := range repos {
+		spec.Argv = append(spec.Argv, "--add-dir", r.Path)
+	}
+	spec.Argv = append(spec.Argv, "--append-system-prompt", orchestratorSystemPrompt(ctCommand(), dir, notes))
 	return spec, nil
 }
 

@@ -3,9 +3,11 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/KCaverly/caretaker/internal/agent"
 	"github.com/KCaverly/caretaker/internal/config"
 	"github.com/KCaverly/caretaker/internal/ctl"
 	"github.com/KCaverly/caretaker/internal/repo"
@@ -188,7 +190,7 @@ func TestQueueStateRoundTrip(t *testing.T) {
 func TestOrchestratorReposListEveryRepo(t *testing.T) {
 	m := ctlModel(t)
 	m.groups = append(m.groups, Group{Repo: repo.Repo{Name: "s", Path: "/s"}})
-	got := m.orchestratorRepos()
+	got := m.orchestratorRepos("")
 	want := []OrchestratorRepo{{Name: "r", Path: "/r"}, {Name: "s", Path: "/s"}}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("repos = %v, want %v", got, want)
@@ -229,7 +231,7 @@ func TestOrchestratorAgentSpecCarriesRoleModelAndNotes(t *testing.T) {
 	cfg := config.Default()
 	cfg.Agent = "claude"
 	c := NewController(cfg)
-	spec, err := c.OrchestratorAgentSpec([]OrchestratorRepo{{Name: "r", Path: "/r"}, {Name: "s", Path: "/s"}}, "", "")
+	spec, err := c.OrchestratorAgentSpec("", []OrchestratorRepo{{Name: "r", Path: "/r"}, {Name: "s", Path: "/s"}}, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,5 +290,106 @@ func TestCtlOpenLeavesAnOpenWorkspaceAlone(t *testing.T) {
 		if resp := <-ch; resp.OK {
 			t.Fatalf("%s on an unknown worktree should fail: %+v", op, resp)
 		}
+	}
+}
+
+// TestClaudeAgentsGetTheirAccount checks that a Claude agent in a repo of an
+// extra account starts with that account's config folder, also when the
+// worktree sits outside the repo, and that other agents are left alone.
+func TestClaudeAgentsGetTheirAccount(t *testing.T) {
+	m := ctlModel(t)
+	m.ctrl = &Controller{cfg: config.Config{ClaudeAccounts: map[string]config.ClaudeAccount{
+		"private": {ConfigDir: "/home/.mjclaude", Folders: []string{"/r"}},
+	}}}
+	m.groups[0].Worktrees = append(m.groups[0].Worktrees,
+		WorktreeView{WT: repo.Worktree{Repo: "r", Name: "far", Path: "/elsewhere/far"}})
+	m.groups = append(m.groups, Group{
+		Repo:      repo.Repo{Name: "s", Path: "/s"},
+		Worktrees: []WorktreeView{{WT: repo.Worktree{Repo: "s", Name: "(main)", Path: "/s", IsMain: true}}},
+	})
+	cases := map[string]string{
+		"/r/.worktrees/a": "/home/.mjclaude",
+		"/elsewhere/far":  "/home/.mjclaude",
+		"/s":              "",
+	}
+	for dir, want := range cases {
+		spec, err := m.prepareAgentSpec(dir, session.Spec{Provider: agent.Claude})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := ""
+		for _, e := range spec.Env {
+			if v, ok := strings.CutPrefix(e, "CLAUDE_CONFIG_DIR="); ok {
+				got = v
+			}
+		}
+		if got != want {
+			t.Errorf("%s: CLAUDE_CONFIG_DIR = %q, want %q", dir, got, want)
+		}
+	}
+}
+
+// TestOrchestratorPerClaudeAccount checks that each Claude account gets its
+// own orchestrator: its key, its repos, its folder and its account.
+func TestOrchestratorPerClaudeAccount(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("CT_CONFIG", filepath.Join(cfgDir, "config.toml"))
+	privateDir := filepath.Join(cfgDir, ".mjclaude")
+	if err := os.MkdirAll(privateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Claude writes .claude.json at login, before ct ever trusts a folder there.
+	if err := os.WriteFile(filepath.Join(privateDir, ".claude.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.ClaudeAccounts = map[string]config.ClaudeAccount{"private": {ConfigDir: privateDir, Folders: []string{"/s"}}}
+	m := ctlModel(t)
+	m.ctrl = NewController(cfg)
+	m.groups = append(m.groups, Group{
+		Repo:      repo.Repo{Name: "s", Path: "/s"},
+		Worktrees: []WorktreeView{{WT: repo.Worktree{Repo: "s", Name: "(main)", Path: "/s", IsMain: true}}},
+	})
+
+	for _, account := range []string{"", "private"} {
+		if got, ok := orchestratorAccountOf(orchestratorKeyFor(account)); !ok || got != account {
+			t.Errorf("key round trip for %q gave %q %v", account, got, ok)
+		}
+	}
+	if _, ok := orchestratorAccountOf("r/a"); ok {
+		t.Error("a worktree key is not an orchestrator")
+	}
+	if got := m.orchestratorRepos("private"); len(got) != 1 || got[0].Name != "s" {
+		t.Errorf("private repos = %v", got)
+	}
+	if got := m.orchestratorRepos(""); len(got) != 1 || got[0].Name != "r" {
+		t.Errorf("default repos = %v", got)
+	}
+	m.current = &workspaceRef{repo: "s", worktree: "(main)", key: "s/(main)", path: "/s"}
+	if got := m.orchestratorAccount(); got != "private" {
+		t.Errorf("orchestrator account from a private worktree = %q", got)
+	}
+
+	spec, err := m.ctrl.OrchestratorAgentSpec("private", m.orchestratorRepos("private"), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(spec.Env, "CLAUDE_CONFIG_DIR="+privateDir) {
+		t.Errorf("private orchestrator env = %v", spec.Env)
+	}
+	tasks := filepath.Join(cfgDir, "orchestrator-private", "s", "tasks.md")
+	if _, err := os.Stat(tasks); err != nil {
+		t.Errorf("private tasks.md not seeded: %v", err)
+	}
+	dir, err := m.ctrl.EnsureOrchestratorDir("private")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(privateDir, ".claude.json"))
+	if !strings.Contains(string(data), dir) {
+		t.Errorf("private orchestrator folder not trusted in the private account: %s", data)
+	}
+	if got := m.orchDir(orchestratorKeyFor("private")); got != dir {
+		t.Errorf("orchDir = %q, want %q", got, dir)
 	}
 }

@@ -65,6 +65,17 @@ type Config struct {
 	Diff Diff `toml:"diff"`
 	// Orchestrator configures the agent that manages work across worktrees.
 	Orchestrator Orchestrator `toml:"orchestrator"`
+	// ClaudeAccounts are extra Claude accounts, keyed by a short name shown in
+	// the UI. Repos inside an account's folders run Claude with that account;
+	// every other repo uses the default one.
+	ClaudeAccounts map[string]ClaudeAccount `toml:"claude_accounts"`
+}
+
+// ClaudeAccount is one extra Claude login: its own config folder, the
+// CLAUDE_CONFIG_DIR Claude Code reads, and the folders whose repos use it.
+type ClaudeAccount struct {
+	ConfigDir string   `toml:"config_dir"`
+	Folders   []string `toml:"folders"`
 }
 
 // Orchestrator configures the orchestrator agent: one Claude session per ct,
@@ -409,6 +420,21 @@ func (c Config) RepoRoots() []string {
 	return out
 }
 
+// ClaudeAccountFor returns the extra Claude account for a repo whose main
+// checkout is at path: the account with the longest folder that holds path.
+// ok is false when path belongs to the default account.
+func (c Config) ClaudeAccountFor(path string) (name string, account ClaudeAccount, ok bool) {
+	best := -1
+	for n, a := range c.ClaudeAccounts {
+		for _, folder := range a.Folders {
+			if len(folder) > best && pathWithin(path, folder) {
+				name, account, ok, best = n, a, true, len(folder)
+			}
+		}
+	}
+	return name, account, ok
+}
+
 // WorktreeFilesFor returns the files to copy or link into a new worktree of
 // the named repo: its own lists when it has a [repos] entry, else the defaults.
 func (c Config) WorktreeFilesFor(repoName string) WorktreeFiles {
@@ -482,6 +508,9 @@ func (c *Config) validate() error {
 	}
 	if !enabled[c.Agents.Default] {
 		return fmt.Errorf("config `agents.default` %q must be present in `agents.enabled`", c.Agents.Default)
+	}
+	if err := c.validateClaudeAccounts(); err != nil {
+		return err
 	}
 	// A negative threshold is meaningless; treat it as "always show".
 	if c.Usage.Threshold < 0 {
@@ -568,6 +597,51 @@ func checkWorktreePattern(pattern string) error {
 		return fmt.Errorf("%q: %w", pattern, err)
 	}
 	return nil
+}
+
+// validateClaudeAccounts resolves each account's paths and rejects typos at
+// startup: a mistyped folder would otherwise send its repos to the default
+// account without a word.
+func (c *Config) validateClaudeAccounts() error {
+	dirs := map[string]string{}
+	folders := map[string]string{}
+	for name, a := range c.ClaudeAccounts {
+		key := "claude_accounts." + name
+		if a.ConfigDir == "" {
+			return fmt.Errorf("config `%s.config_dir` is required", key)
+		}
+		dir, err := ResolveRoot(a.ConfigDir)
+		if err != nil {
+			return fmt.Errorf("config `%s.config_dir`: %w", key, err)
+		}
+		if other, dup := dirs[dir]; dup {
+			return fmt.Errorf("config `%s.config_dir` is also used by `claude_accounts.%s`", key, other)
+		}
+		dirs[dir] = name
+		a.ConfigDir = dir
+		if len(a.Folders) == 0 {
+			return fmt.Errorf("config `%s.folders` needs at least one folder", key)
+		}
+		for i, f := range a.Folders {
+			abs, err := ResolveRoot(f)
+			if err != nil {
+				return fmt.Errorf("config `%s.folders[%d]`: %w", key, i, err)
+			}
+			if other, dup := folders[abs]; dup && other != name {
+				return fmt.Errorf("config `%s.folders[%d]` is also listed by `claude_accounts.%s`", key, i, other)
+			}
+			folders[abs] = name
+			a.Folders[i] = abs
+		}
+		c.ClaudeAccounts[name] = a
+	}
+	return nil
+}
+
+// pathWithin reports whether path is dir or inside it.
+func pathWithin(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 func expandTilde(path string) (string, error) {

@@ -79,6 +79,28 @@ func TestAgentStripShowsAttention(t *testing.T) {
 	}
 }
 
+func TestAgentStripMarksCurrentWorktree(t *testing.T) {
+	m := stripModel(t, 120, "alpha", "beta")
+	raw, _ := m.agentStripLayout()
+	blue := "38;2;131;165;152" // cAccent as a truecolor foreground
+
+	// The style is the escape code right before each name. Underlined text is
+	// written one letter at a time, so look for the first letter only.
+	styleOf := func(name string) string {
+		at := strings.Index(raw, "m"+name[:1])
+		if at < 0 {
+			t.Fatalf("no %s in %q", name, raw)
+		}
+		return raw[strings.LastIndex(raw[:at], "\x1b["):at]
+	}
+	if st := styleOf("beta"); !strings.Contains(st, blue) || !strings.HasPrefix(st, "\x1b[4;") {
+		t.Fatalf("the current worktree should be blue and underlined: %q", st)
+	}
+	if st := styleOf("alpha"); strings.Contains(st, blue) {
+		t.Fatalf("another worktree should not be blue: %q", st)
+	}
+}
+
 func TestAgentStripOverflow(t *testing.T) {
 	names := []string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
 	m := stripModel(t, 80, names...)

@@ -145,3 +145,31 @@ func TestAgentStripDropsRepoNamesFirst(t *testing.T) {
 		t.Fatalf("repo names should go before worktree names: %q", row)
 	}
 }
+
+// TestAgentStripGroupsByClaudeAccount checks that an extra account's worktrees
+// come after the default account's and sit on their own background.
+func TestAgentStripGroupsByClaudeAccount(t *testing.T) {
+	m := stripModelKeys(t, 140, "front/zeta", "home/alpha", "back/beta")
+	var homePath string
+	for _, it := range m.active {
+		if it.repo.Name == "home" {
+			homePath = it.view.WT.Path
+		}
+	}
+	m.ctrl.cfg.ClaudeAccounts = map[string]config.ClaudeAccount{
+		"private": {ConfigDir: t.TempDir(), Folders: []string{homePath}},
+	}
+
+	if row, want := barFirstRow(m), "front: zeta │ back: beta │ home: alpha"; !strings.Contains(row, want) {
+		t.Fatalf("the private worktree should come last, want %q in %q", want, row)
+	}
+	raw := strings.SplitN(m.renderBar(), "\n", 2)[0]
+	tint := "48;2;60;56;54" // cAccountBg as a truecolor background
+	at := strings.Index(raw, tint)
+	if at < 0 {
+		t.Fatalf("no account background in %q", raw)
+	}
+	if before := ansi.Strip(raw[:at]); strings.Contains(before, "alpha") || !strings.Contains(before, "beta") {
+		t.Fatalf("the background should start at the private block, before it: %q", before)
+	}
+}

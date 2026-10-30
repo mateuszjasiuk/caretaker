@@ -215,13 +215,40 @@ command = "mise"
 args = ["exec", "--", "codex"]
 ```
 
+### Several Claude accounts
+
+Claude Code keeps each login in its own config folder, chosen with
+`CLAUDE_CONFIG_DIR`. To use, say, a work and a private account side by side,
+log in to the second one once (`CLAUDE_CONFIG_DIR=~/.claude-private claude`)
+and name the folders whose repos should use it:
+
+```toml
+[claude_accounts.private]
+config_dir = "~/.claude-private"
+folders = ["~/Projects"]
+```
+
+Claude agents in repos under one of `folders` start with that account's
+`CLAUDE_CONFIG_DIR`; every other repo, and the `~` home workspace, uses the
+default account (`~/.claude`, or whatever `CLAUDE_CONFIG_DIR` was when ct
+started). When folders nest, the longer one wins. ct checks at startup that
+`config_dir` and every folder exist, and that no two accounts share one.
+
+Each account gets its own orchestrator (see below), status polling covers
+every account with an open agent, and the bar's agent strip shows an extra
+account's worktrees as one block on a darker background, after the default
+account's. The usage gauge only reads the default account, so it is hidden
+next to agents on another one.
+
 ## Orchestrator
 
 The orchestrator is a Claude agent that sees every worktree of every repo and
-can start, message, and stop the agents working in them. There is one per ct.
-It runs in its own folder, `~/.caretaker/orchestrator/`, outside every repo,
-and each repo's main checkout is added with `--add-dir`, so it can read the
-code when it plans a task. Its system prompt describes `ct ctl`, lists the
+can start, message, and stop the agents working in them. There is one per
+Claude account (one in total unless you set up `[claude_accounts]`), and it
+manages that account's repos. It runs in its own folder,
+`~/.caretaker/orchestrator/` (`orchestrator-<name>/` for an extra account),
+outside every repo, and each of its repos' main checkout is added with
+`--add-dir`, so it can read the code when it plans a task. Its system prompt describes `ct ctl`, lists the
 repos, and sets the rules below; it runs on the model from `[orchestrator]`
 (`sonnet` by default). It is not listed in the agent board or the bar's agent
 strip; the orchestrator icon stands for it. It resumes its conversation across
@@ -235,8 +262,9 @@ open it to get a plain agent on the main branch.
 
 Press `alt+o`, click the orchestrator icon in the bar's tab row (between the
 agent and terminal icons), or pick "open orchestrator" in the command palette
-to show it. The icon is always there and lights up while the orchestrator view
-is showing. The view lays over your current worktree, which stays current: the
+to show it. With several accounts, the worktree you are on (or the repo
+selected on the deck) decides which orchestrator opens. The icon is always
+there and lights up while the orchestrator view is showing. The view lays over your current worktree, which stays current: the
 jump and cycle keys lead back to its editor, agent, and terminal, and `alt+o`
 again returns to the view you came from. Behind the scenes ct opens the
 orchestrator's workspace in the background and starts the orchestrator agent
@@ -246,8 +274,8 @@ spawning worktrees for a batch of tasks, briefing an agent, or getting an
 overview of what is running.
 
 Its plan lives outside the repos, one file per repo:
-`~/.caretaker/orchestrator/<repo>/tasks.md`, one line per task with the
-worktree and its state. Those files, not the conversation, are its memory. When the conversation gets long, pick "new
+`~/.caretaker/orchestrator/<repo>/tasks.md` (in `orchestrator-<name>/` for an
+extra account), one line per task with the worktree and its state. Those files, not the conversation, are its memory. When the conversation gets long, pick "new
 orchestrator session" in the palette: it replaces the session with a fresh one
 that reads the `tasks.md` files and carries on.
 

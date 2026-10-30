@@ -547,3 +547,61 @@ func TestLoadRejectsBadWorktreeFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadClaudeAccounts(t *testing.T) {
+	base := t.TempDir()
+	for _, d := range []string{"private", "private/work", ".mjclaude", ".other"} {
+		if err := os.MkdirAll(filepath.Join(base, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := loadTOML(t, `
+[claude_accounts.private]
+config_dir = `+strconv.Quote(filepath.Join(base, ".mjclaude"))+`
+folders = [`+strconv.Quote(filepath.Join(base, "private"))+`]
+
+[claude_accounts.other]
+config_dir = `+strconv.Quote(filepath.Join(base, ".other"))+`
+folders = [`+strconv.Quote(filepath.Join(base, "private", "work"))+`]
+`)
+	cases := map[string]string{
+		filepath.Join(base, "private", "caretaker"):    "private",
+		filepath.Join(base, "private"):                 "private",
+		filepath.Join(base, "private", "work", "repo"): "other", // the longer folder wins
+		filepath.Join(base, "private-not"):             "",
+		filepath.Join(base, "elsewhere"):               "",
+	}
+	for path, want := range cases {
+		name, a, ok := cfg.ClaudeAccountFor(path)
+		if name != want || ok != (want != "") {
+			t.Errorf("ClaudeAccountFor(%s) = %q %v, want %q", path, name, ok, want)
+		}
+		if want == "private" && a.ConfigDir != filepath.Join(base, ".mjclaude") {
+			t.Errorf("config dir = %q", a.ConfigDir)
+		}
+	}
+}
+
+func TestLoadRejectsBadClaudeAccounts(t *testing.T) {
+	base := t.TempDir()
+	dir := strconv.Quote(base)
+	cases := map[string]string{
+		"[claude_accounts.a]\nfolders = [" + dir + "]":                         "claude_accounts.a.config_dir",
+		"[claude_accounts.a]\nconfig_dir = " + dir:                             "claude_accounts.a.folders",
+		"[claude_accounts.a]\nconfig_dir = \"/nope\"\nfolders = [" + dir + "]": "claude_accounts.a.config_dir",
+		"[claude_accounts.a]\nconfig_dir = " + dir + "\nfolders = [\"/nope\"]": "claude_accounts.a.folders[0]",
+		"[claude_accounts.a]\nconfig_dir = " + dir + "\nfolders = [" + dir + "]\n" +
+			"[claude_accounts.b]\nconfig_dir = " + dir + "\nfolders = [\"/tmp\"]": "config_dir` is also used",
+	}
+	for body, want := range cases {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := os.WriteFile(path, []byte("root = "+dir+"\n"+body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("CT_CONFIG", path)
+		_, err := Load()
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: error %v, want it to mention %q", body, err, want)
+		}
+	}
+}

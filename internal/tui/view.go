@@ -30,7 +30,10 @@ var (
 	cDim    = lipgloss.Color("#928374") // gray
 	cFaint  = lipgloss.Color("#665C54") // bg3
 	cSelBg  = lipgloss.Color("#665C54") // bg3 (strong selection)
-	cInk    = lipgloss.Color("#1D2021") // bg0_h (hard)
+	// cAccountBg sits behind the agent strip's worktrees of an extra Claude
+	// account: quieter than a selection, but enough to read them as a block.
+	cAccountBg = lipgloss.Color("#3C3836") // bg1
+	cInk       = lipgloss.Color("#1D2021") // bg0_h (hard)
 )
 
 var (
@@ -373,6 +376,13 @@ func (m Model) usageSegment() (string, bool) {
 	provider, ok := m.activeUsageProvider()
 	if !ok || m.screen != screenAgent || !m.usageFresh(provider) {
 		return "", false
+	}
+	// The gauge reads the default account's login, so it would show the wrong
+	// numbers next to an agent on another account.
+	if provider == agent.Claude && m.current != nil {
+		if _, configDir := m.claudeAccountFor(m.current.path); configDir != "" {
+			return "", false
+		}
 	}
 	snap, _, _ := m.usageState(provider)
 	binding, ok := snap.BindingWindow()
@@ -2379,25 +2389,25 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 		if m.current != nil && g.key == m.current.key {
 			st = st.Underline(true)
 		}
-		return st.Render(name)
+		return onAccount(st, g.account != "").Render(name)
 	}
-	sep := dimStyle.Render(" · ")
-	repoSep := barSep.Render(" │ ")
 	// lead is what goes before item i: a separator, and the repo's name when
-	// item i starts a new repo.
+	// item i starts a new repo. An extra account's block keeps its background
+	// between its items; the separator before the block stays outside it.
 	lead := func(i int, withRepo bool) string {
 		g := groups[i]
 		newRepo := i == 0 || groups[i-1].repo != g.repo
+		inBlock := g.account != "" && i > 0 && groups[i-1].account == g.account
 		var s string
 		switch {
 		case i == 0:
 		case withRepo && newRepo:
-			s = repoSep
+			s = onAccount(barSep, inBlock).Render(" │ ")
 		default:
-			s = sep
+			s = onAccount(dimStyle, inBlock).Render(" · ")
 		}
 		if withRepo && newRepo && g.key != m.homeWSKey {
-			s += barSep.Render(truncateTo(g.repo, 16)+":") + " "
+			s += onAccount(barSep, g.account != "").Render(truncateTo(g.repo, 16) + ": ")
 		}
 		return s
 	}
@@ -2483,4 +2493,12 @@ func (m Model) stripClick(x, y int) (tea.Model, tea.Cmd, bool) {
 		return mm, cmd, true
 	}
 	return m, nil, false
+}
+
+// onAccount puts st on the extra-account background when on is true.
+func onAccount(st lipgloss.Style, on bool) lipgloss.Style {
+	if on {
+		return st.Background(cAccountBg)
+	}
+	return st
 }

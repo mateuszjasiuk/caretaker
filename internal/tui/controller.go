@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,12 +29,13 @@ import (
 type Controller struct {
 	cfg config.Config
 	// projectsDir overrides where ct looks for claude's stored transcripts when
-	// deciding whether a persisted agent can be resumed. Empty means the default
-	// ~/.claude/projects; tests point it at a temp dir.
+	// deciding whether a persisted agent can be resumed. Empty means every
+	// account's projects folder (see claudeProjectsDirs); tests point it at a
+	// temp dir.
 	projectsDir string
 	// trusted records the directories EnsureDirTrusted has already verified
 	// (or set) the trust flag for, so subsequent agent launches skip
-	// re-reading ~/.claude.json. Only touched from the UI goroutine.
+	// re-reading .claude.json. Only touched from the UI goroutine.
 	trusted map[string]bool
 	// loadSeq stamps each issued Load so the loadedMsg handler can drop
 	// results superseded by a newer in-flight load.
@@ -274,25 +277,33 @@ func (c *Controller) EnsureHomeDirTrusted() error {
 	return c.EnsureDirTrusted(home)
 }
 
-// EnsureDirTrusted marks dir as trusted in Claude's config so a session started
-// there skips the trust prompt. Repo worktrees are trusted on their own
-// (claude remembers them per project); this is for the synthetic workspaces
-// ct starts in directories the user may never have opened claude in.
+// EnsureDirTrusted marks dir as trusted in the default Claude account's config
+// so a session started there skips the trust prompt. Repo worktrees are
+// trusted on their own (claude remembers them per project); this is for the
+// synthetic workspaces ct starts in directories the user may never have
+// opened claude in.
 func (c *Controller) EnsureDirTrusted(dir string) error {
-	if c.trusted[dir] {
-		return nil
-	}
-	home, err := os.UserHomeDir()
+	return c.ensureDirTrustedFor("", dir)
+}
+
+// ensureDirTrustedFor is EnsureDirTrusted in the config of a Claude account
+// ("" for the default one).
+func (c *Controller) ensureDirTrustedFor(account, dir string) error {
+	claudeJSON, err := c.claudeJSON(account)
 	if err != nil {
 		return err
 	}
-	if err := ensureProjectTrusted(filepath.Join(home, ".claude.json"), dir); err != nil {
+	key := claudeJSON + "\x00" + dir
+	if c.trusted[key] {
+		return nil
+	}
+	if err := ensureProjectTrusted(claudeJSON, dir); err != nil {
 		return err
 	}
 	if c.trusted == nil {
 		c.trusted = map[string]bool{}
 	}
-	c.trusted[dir] = true
+	c.trusted[key] = true
 	return nil
 }
 
@@ -303,37 +314,44 @@ func (c *Controller) RestoreSessions() bool { return c.cfg.RestoreSessions }
 // into words; nil when unset.
 func (c *Controller) FocusCommand() []string { return strings.Fields(c.cfg.FocusCommand) }
 
-// OrchestratorDir is the orchestrator's own folder, "orchestrator" next to
-// the config file. It runs there, outside every repo, and keeps each repo's
-// notes in a subfolder named after the repo.
-func (c *Controller) OrchestratorDir() (string, error) {
+// OrchestratorDir is the orchestrator's own folder for a Claude account,
+// next to the config file: "orchestrator" for the default account,
+// "orchestrator-<name>" for another. It runs there, outside every repo, and
+// keeps each repo's notes in a subfolder named after the repo.
+func (c *Controller) OrchestratorDir(account string) (string, error) {
 	cfgPath, err := config.Path()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(filepath.Dir(cfgPath), "orchestrator"), nil
+	name := "orchestrator"
+	if account != "" {
+		name += "-" + account
+	}
+	return filepath.Join(filepath.Dir(cfgPath), name), nil
 }
 
-// EnsureOrchestratorDir creates the orchestrator's folder and marks it
-// trusted, so its session starts without the trust prompt.
-func (c *Controller) EnsureOrchestratorDir() (string, error) {
-	dir, err := c.OrchestratorDir()
+// EnsureOrchestratorDir creates the account's orchestrator folder and marks
+// it trusted in that account's config, so its session starts without the
+// trust prompt.
+func (c *Controller) EnsureOrchestratorDir(account string) (string, error) {
+	dir, err := c.OrchestratorDir(account)
 	if err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	if err := c.EnsureDirTrusted(dir); err != nil {
+	if err := c.ensureDirTrustedFor(account, dir); err != nil {
 		return "", err
 	}
 	return dir, nil
 }
 
-// EnsureOrchestratorNotes creates the notes directory for repoName and seeds
-// tasks.md when it is missing, and returns the path of tasks.md.
-func (c *Controller) EnsureOrchestratorNotes(repoName string) (string, error) {
-	base, err := c.OrchestratorDir()
+// EnsureOrchestratorNotes creates the notes directory for repoName in the
+// account's orchestrator folder and seeds tasks.md when it is missing, and
+// returns the path of tasks.md.
+func (c *Controller) EnsureOrchestratorNotes(account, repoName string) (string, error) {
+	base, err := c.OrchestratorDir(account)
 	if err != nil {
 		return "", err
 	}
@@ -357,42 +375,47 @@ type OrchestratorRepo struct {
 	Name, Path string
 }
 
-// OrchestratorAgentSpec builds the orchestrator agent: a normal ct-managed
-// Claude session (fresh under id, or resumed when its transcript exists) on
-// the configured model, with the orchestrator instructions appended to its
-// system prompt. Each repo's main checkout is added with --add-dir so it can
-// read the code; the instructions name this ct binary and each repo's
-// tasks.md.
-func (c *Controller) OrchestratorAgentSpec(repos []OrchestratorRepo, id, label string) (session.Spec, error) {
+// OrchestratorAgentSpec builds the orchestrator agent of a Claude account
+// ("" for the default one): a normal ct-managed Claude session (fresh under
+// id, or resumed when its transcript exists) on the configured model and that
+// account, with the orchestrator instructions appended to its system prompt.
+// repos are the account's repos; each main checkout is added with --add-dir
+// so it can read the code, and the instructions name this ct binary and each
+// repo's tasks.md.
+func (c *Controller) OrchestratorAgentSpec(account string, repos []OrchestratorRepo, id, label string) (session.Spec, error) {
 	providerCfg, err := c.providerConfig(agent.Claude)
 	if err != nil {
 		return session.Spec{}, err
 	}
-	dir, err := c.OrchestratorDir()
+	dir, err := c.OrchestratorDir(account)
 	if err != nil {
 		return session.Spec{}, err
 	}
 	notes := make([]orchestratorRepoNotes, 0, len(repos))
 	for _, r := range repos {
-		tasks, err := c.EnsureOrchestratorNotes(r.Name)
+		tasks, err := c.EnsureOrchestratorNotes(account, r.Name)
 		if err != nil {
 			return session.Spec{}, err
 		}
 		notes = append(notes, orchestratorRepoNotes{Name: r.Name, Path: r.Path, Tasks: tasks})
 	}
-	if id == "" {
+	fresh := id == ""
+	if fresh {
 		id = newSessionID()
 	}
 	if label == "" {
 		label = orchestratorLabel
 	}
 	var spec session.Spec
-	if c.transcriptExists(id) {
+	if !fresh && c.transcriptExists(id) {
 		spec = c.resumeClaudeAgentSpec(providerCfg, id, label, "")
 	} else {
 		spec = c.freshClaudeAgentSpec(providerCfg, id, label, "")
 	}
 	spec.Role = orchestratorRole
+	if configDir := c.claudeConfigDirOf(account); configDir != "" {
+		spec.Env = append(spec.Env, "CLAUDE_CONFIG_DIR="+configDir)
+	}
 	if model := c.cfg.Orchestrator.Model; model != "" {
 		spec.Argv = append(spec.Argv, "--model", model)
 	}
@@ -446,32 +469,36 @@ func (c *Controller) transcriptPath(cwd, id string) (string, bool) {
 	if id == "" {
 		return "", false
 	}
-	dir := c.projectsDir
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", false
-		}
-		dir = filepath.Join(home, ".claude", "projects")
-	}
 	name := id + ".jsonl"
+	dirs := c.claudeProjectsDirs()
 	if cwd != "" {
-		p := filepath.Join(dir, claudeProjectName(cwd), name)
-		if _, err := os.Stat(p); err == nil {
-			return p, true
+		for _, dir := range dirs {
+			p := filepath.Join(dir, claudeProjectName(cwd), name)
+			if _, err := os.Stat(p); err == nil {
+				return p, true
+			}
 		}
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "", false
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
+	// A hand-rolled scan rather than filepath.Glob("*/id.jsonl"): Glob reads the
+	// projects dir, then Lstats id.jsonl in every project subdir AND sorts the
+	// result — it never stops at the first hit. Here we stat each subdir's
+	// candidate and return on the first match, so a resumable agent (the common
+	// case) usually settles in a handful of stats instead of a full scan. This
+	// runs once per persisted agent on the activation path, so the short-circuit
+	// shaves real latency off opening a workspace.
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
 			continue
 		}
-		p := filepath.Join(dir, e.Name(), name)
-		if _, err := os.Stat(p); err == nil {
-			return p, true
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			p := filepath.Join(dir, e.Name(), name)
+			if _, err := os.Stat(p); err == nil {
+				return p, true
+			}
 		}
 	}
 	return "", false
@@ -798,38 +825,76 @@ func (c *Controller) AgentSpec(id, label string) session.Spec {
 // dir rather than reconstructing claude's cwd-derived path key (which is
 // internal and version-dependent).
 func (c *Controller) transcriptExists(id string) bool {
-	if id == "" {
-		return false
+	_, ok := c.transcriptPath("", id)
+	return ok
+}
+
+// ClaudeAccount names the Claude account of the repo whose main checkout is
+// at repoPath, with its config folder; both are "" for the default account.
+func (c *Controller) ClaudeAccount(repoPath string) (name, configDir string) {
+	if name, account, ok := c.cfg.ClaudeAccountFor(repoPath); ok {
+		return name, account.ConfigDir
 	}
-	dir := c.projectsDir
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return false
-		}
-		dir = filepath.Join(home, ".claude", "projects")
+	return "", ""
+}
+
+// claudeConfigDirOf is the config folder of a named Claude account, or ""
+// for the default one.
+func (c *Controller) claudeConfigDirOf(account string) string {
+	return c.cfg.ClaudeAccounts[account].ConfigDir
+}
+
+// claudeJSON is the .claude.json of a Claude account ("" for the default
+// one). With CLAUDE_CONFIG_DIR set, Claude keeps it inside that folder.
+func (c *Controller) claudeJSON(account string) (string, error) {
+	if dir := c.claudeConfigDirOf(account); dir != "" {
+		return filepath.Join(dir, ".claude.json"), nil
 	}
-	// A hand-rolled scan rather than filepath.Glob("*/id.jsonl"): Glob reads the
-	// projects dir, then Lstats id.jsonl in every project subdir AND sorts the
-	// result — it never stops at the first hit. Here we stat each subdir's
-	// candidate and return on the first match, so a resumable agent (the common
-	// case) usually settles in a handful of stats instead of a full scan. This
-	// runs once per persisted agent on the activation path, so the short-circuit
-	// shaves real latency off opening a workspace.
-	entries, err := os.ReadDir(dir)
+	return defaultClaudeJSON()
+}
+
+// claudeProjectsDirs lists where Claude keeps transcripts: the default
+// account's projects folder, then each extra account's. Session ids are
+// unique, so a lookup can search them all without knowing the account.
+func (c *Controller) claudeProjectsDirs() []string {
+	if c.projectsDir != "" {
+		return []string{c.projectsDir}
+	}
+	var dirs []string
+	if dir, err := defaultClaudeConfigDir(); err == nil {
+		dirs = append(dirs, filepath.Join(dir, "projects"))
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.cfg.ClaudeAccounts)) {
+		dirs = append(dirs, filepath.Join(c.cfg.ClaudeAccounts[name].ConfigDir, "projects"))
+	}
+	return dirs
+}
+
+// defaultClaudeConfigDir is the default account's config folder: the
+// CLAUDE_CONFIG_DIR ct was started with, else ~/.claude.
+func defaultClaudeConfigDir() (string, error) {
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return dir, nil
+	}
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return false
+		return "", err
 	}
-	name := id + ".jsonl"
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(dir, e.Name(), name)); err == nil {
-			return true
-		}
+	return filepath.Join(home, ".claude"), nil
+}
+
+// defaultClaudeJSON is the default account's .claude.json. Claude keeps it
+// inside CLAUDE_CONFIG_DIR when that is set, but next to ~/.claude (not in
+// it) when it is not.
+func defaultClaudeJSON() (string, error) {
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return filepath.Join(dir, ".claude.json"), nil
 	}
-	return false
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".claude.json"), nil
 }
 
 // ResumeAgentSpec returns the spec for a Claude agent session that resumes the
@@ -899,16 +964,54 @@ func parseAgentStatuses(data []byte) (map[int]AgentStatus, error) {
 }
 
 // AgentStatuses runs `claude agents --json` and returns live session statuses
-// keyed by pid. It requires no TTY and exits immediately.
-func (c *Controller) AgentStatuses(ctx context.Context) (map[int]AgentStatus, error) {
+// keyed by pid. It requires no TTY and exits immediately. Each Claude account
+// lists only its own sessions, so it runs for the default account and for
+// each extra account named in accounts, in parallel. An account whose call
+// fails is skipped; the error comes back only when every call failed.
+func (c *Controller) AgentStatuses(ctx context.Context, accounts []string) (map[int]AgentStatus, error) {
 	providerCfg, err := c.providerConfig(agent.Claude)
 	if err != nil {
 		return nil, err
 	}
 	argv := append(append([]string(nil), providerCfg.Args...), "agents", "--json")
-	out, err := exec.CommandContext(ctx, providerCfg.Command, argv...).Output()
-	if err != nil {
-		return nil, err
+
+	configDirs := []string{""} // the default account: ct's own environment
+	for _, name := range accounts {
+		if dir := c.claudeConfigDirOf(name); dir != "" {
+			configDirs = append(configDirs, dir)
+		}
 	}
-	return parseAgentStatuses(out)
+	results := make([]map[int]AgentStatus, len(configDirs))
+	errs := make([]error, len(configDirs))
+	var wg sync.WaitGroup
+	for i, dir := range configDirs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cmd := exec.CommandContext(ctx, providerCfg.Command, argv...)
+			if dir != "" {
+				cmd.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+dir)
+			}
+			out, err := cmd.Output()
+			if err == nil {
+				results[i], err = parseAgentStatuses(out)
+			}
+			errs[i] = err
+		}()
+	}
+	wg.Wait()
+
+	merged := map[int]AgentStatus{}
+	failed := 0
+	for i, st := range results {
+		if errs[i] != nil {
+			failed++
+			continue
+		}
+		maps.Copy(merged, st)
+	}
+	if failed == len(configDirs) {
+		return nil, errors.Join(errs...)
+	}
+	return merged, nil
 }

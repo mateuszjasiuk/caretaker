@@ -6,13 +6,33 @@ import (
 )
 
 // orchestratorRole marks the orchestrator agent. orchestratorLabel is its
-// default name. orchestratorKey is the synthetic workspace it runs in: one
-// per ct, in its own folder outside every repo.
+// default name. orchestratorKey is the synthetic workspace the default Claude
+// account's orchestrator runs in; each other account has its own (see
+// orchestratorKeyFor), each in its own folder outside every repo.
 const (
 	orchestratorRole  = "orchestrator"
 	orchestratorLabel = "orchestrator"
 	orchestratorKey   = "~/orchestrator"
 )
+
+// orchestratorKeyFor is the orchestrator workspace of a Claude account:
+// "~/orchestrator" for the default one, "~/orchestrator-<name>" for another.
+func orchestratorKeyFor(account string) string {
+	if account == "" {
+		return orchestratorKey
+	}
+	return orchestratorKey + "-" + account
+}
+
+// orchestratorAccountOf is the inverse of orchestratorKeyFor. ok is false when
+// key is not an orchestrator workspace.
+func orchestratorAccountOf(key string) (account string, ok bool) {
+	if key == orchestratorKey {
+		return "", true
+	}
+	account, ok = strings.CutPrefix(key, orchestratorKey+"-")
+	return account, ok && account != ""
+}
 
 // orchestratorTasksSeed is the first content of a repo's tasks.md.
 const orchestratorTasksSeed = `# Tasks
@@ -63,6 +83,7 @@ Rules:
 - A message you send becomes the agent's next prompt. Make it self-contained: say what to do, where, and what done looks like. Do not send chit-chat or status requests; use summary instead.
 - Never answer another agent's permission prompt or question for it. Tell the user which worktree is waiting and why.
 - Do not remove or stop a worktree unless the user asked for it in this conversation. "ctl remove" only asks the user to confirm in ct; it never deletes on its own.
+- Only act on worktrees of the repos listed above. "ctl list" also shows repos of other Claude accounts; leave those alone.
 - Do not edit code in the repos' main checkouts. Code changes belong in worktrees, done by their agents.
 - Worktree names are short, lowercase, hyphenated, and describe the task (for example fix-login-redirect).
 - One task per worktree. When a task is done and merged, say so; the user decides what to clean up.

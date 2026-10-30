@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -437,10 +438,10 @@ type Model struct {
 	// home workspace path/key, cached on first open for pathToKey lookups
 	homeWSPath string
 	homeWSKey  string
-	// orchWSPath is the orchestrator workspace's folder, set on first open
-	// like the home one; orchFrom is the view the orchestrator was opened from.
-	orchWSPath string
-	orchFrom   screen
+	// orchKey is the orchestrator workspace (one per Claude account) the
+	// orchestrator view shows; orchFrom is the view it was opened from.
+	orchKey  string
+	orchFrom screen
 
 	// ctlSrv is the control socket `ct ctl` talks to; nil in tests. queueSent
 	// records when each workspace last had a queued message delivered, so the
@@ -861,10 +862,11 @@ func (m Model) Init() tea.Cmd {
 // pollStatusCmd runs one `claude agents --json` poll off the UI goroutine.
 func (m Model) pollStatusCmd() tea.Cmd {
 	ctrl := m.ctrl
+	accounts := m.openClaudeAccounts()
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
-		st, err := ctrl.AgentStatuses(ctx)
+		st, err := ctrl.AgentStatuses(ctx, accounts)
 		return statusMsg{byPid: st, err: err}
 	}
 }
@@ -1184,7 +1186,7 @@ func (m *Model) syncFocus() {
 // or the orchestrator's own folder.
 func (m Model) screenDir() string {
 	if m.screen == screenOrchestrator {
-		return m.orchWSPath
+		return m.orchDir(m.orchKey)
 	}
 	if m.current == nil {
 		return ""
@@ -1284,9 +1286,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			w, h := m.sessionSize()
 			m.mgr.ResizeWorkspace(m.current.key, w, h)
 		}
-		if m.screen == screenOrchestrator && m.mgr.Has(orchestratorKey) {
+		if m.screen == screenOrchestrator && m.mgr.Has(m.orchKey) {
 			w, h := m.sessionSize()
-			m.mgr.ResizeWorkspace(orchestratorKey, w, h)
+			m.mgr.ResizeWorkspace(m.orchKey, w, h)
 		}
 		return m, nil
 
@@ -2007,6 +2009,7 @@ type agentGroup struct {
 	busy                      bool      // some agent is working
 	highlighted               bool      // flagged with the highlight key
 	opened                    int64
+	account                   string // Claude account; set by stripGroups only
 }
 
 // agentGroup collects the agent rows of one open workspace, in pool order. It
@@ -2049,7 +2052,9 @@ func (m Model) agentGroup(key, repoName, wtName, path string) (agentGroup, bool)
 // stripGroups lists every open workspace for the bar's agent strip. Unlike the
 // board and the deck, the order is fixed (repos in deck order, worktrees by
 // name, then the home workspace) so items don't move when you switch worktrees
-// or an agent's status changes; only their colour does.
+// or an agent's status changes; only their colour does. Workspaces of extra
+// Claude accounts follow the default account's, one account at a time, so
+// each account reads as one block.
 func (m Model) stripGroups() []agentGroup {
 	active := slices.Clone(m.active)
 	repoIdx := map[string]int{}
@@ -2074,6 +2079,7 @@ func (m Model) stripGroups() []agentGroup {
 		seen[key] = true
 		// A workspace whose only agent is the orchestrator has nothing to show.
 		if g, ok := m.agentGroup(key, repoName, wtName, path); ok && len(g.agents) > 0 {
+			g.account, _ = m.claudeAccountFor(path)
 			groups = append(groups, g)
 		}
 	}
@@ -2086,6 +2092,7 @@ func (m Model) stripGroups() []agentGroup {
 	if m.homeWSKey != "" {
 		add(m.homeWSKey, "~", "config", m.homeWSPath)
 	}
+	sort.SliceStable(groups, func(i, j int) bool { return groups[i].account < groups[j].account })
 	return groups
 }
 
@@ -3112,8 +3119,8 @@ func (m Model) workspaceSpecs(key string, addDefault bool) ([]session.Spec, erro
 // prompt. An orchestrator comes back with its instructions and model.
 func (m Model) restoreAgentSpec(key string, a state.AgentState, prompt string) (session.Spec, error) {
 	provider := normalizedProvider(a.Provider)
-	if a.Role == orchestratorRole && provider == agent.Claude {
-		return m.ctrl.OrchestratorAgentSpec(m.orchestratorRepos(), a.SessionID, a.Label)
+	if account, ok := orchestratorAccountOf(key); ok && a.Role == orchestratorRole && provider == agent.Claude {
+		return m.ctrl.OrchestratorAgentSpec(account, m.orchestratorRepos(account), a.SessionID, a.Label)
 	}
 	return m.ctrl.RestoreProviderAgentSpec(provider, a.SessionID, a.Label, prompt)
 }
@@ -3139,7 +3146,71 @@ func (m Model) prepareWorkspaceSpecs(dir string, specs []session.Spec) ([]sessio
 func (m Model) prepareAgentSpec(dir string, spec session.Spec) (session.Spec, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
 	defer cancel()
-	return m.ctrl.PrepareAgentSpec(ctx, dir, spec)
+	spec, err := m.ctrl.PrepareAgentSpec(ctx, dir, spec)
+	if err != nil {
+		return spec, err
+	}
+
+	if normalizedProvider(spec.Provider) == agent.Claude {
+		if _, configDir := m.claudeAccountFor(dir); configDir != "" {
+			spec.Env = append(spec.Env, "CLAUDE_CONFIG_DIR="+configDir)
+		}
+	}
+	return spec, nil
+}
+
+// claudeAccountFor names the Claude account for agents started in dir, with
+// its config folder; both are "" for the default account. The repo decides,
+// since a worktree need not sit inside its repo; a worktree the deck has not
+// loaded yet is matched by its own path.
+func (m Model) claudeAccountFor(dir string) (account, configDir string) {
+	dir = filepath.Clean(dir)
+	for _, g := range m.groups {
+		for _, wv := range g.Worktrees {
+			if filepath.Clean(wv.WT.Path) == dir {
+				return m.ctrl.ClaudeAccount(g.Repo.Path)
+			}
+		}
+	}
+	return m.ctrl.ClaudeAccount(dir)
+}
+
+// openClaudeAccounts lists the extra Claude accounts with at least one open
+// Claude agent, so status polling skips accounts with nothing to report.
+func (m Model) openClaudeAccounts() []string {
+	open := map[string]bool{}
+	for _, key := range m.mgr.Keys() {
+		ws, ok := m.mgr.Workspace(key)
+		if !ok || !slices.ContainsFunc(ws.Agents, func(s *session.Session) bool {
+			return normalizedProvider(s.Provider) == agent.Claude
+		}) {
+			continue
+		}
+		account, isOrch := orchestratorAccountOf(key)
+		if !isOrch {
+			if dir, ok := m.worktreePath(key); ok {
+				account, _ = m.claudeAccountFor(dir)
+			}
+		}
+		if account != "" {
+			open[account] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(open))
+}
+
+// orchDir is the folder of an orchestrator workspace, or "" when key is not
+// one.
+func (m Model) orchDir(key string) string {
+	account, ok := orchestratorAccountOf(key)
+	if !ok {
+		return ""
+	}
+	dir, err := m.ctrl.OrchestratorDir(account)
+	if err != nil {
+		return ""
+	}
+	return dir
 }
 
 func closeSpecCompanions(specs []session.Spec) {
@@ -3159,7 +3230,7 @@ func (m Model) savedActiveAgent(key string) int {
 // onlyOldOrchestrators reports whether key's saved pool held agents and every
 // one was an orchestrator that savedAgents leaves out.
 func (m Model) onlyOldOrchestrators(key string) bool {
-	if m.state == nil || key == orchestratorKey {
+	if _, orch := orchestratorAccountOf(key); m.state == nil || orch {
 		return false
 	}
 	all, _ := m.state.Agents(key)
@@ -3176,7 +3247,7 @@ func (m Model) savedAgents(key string) ([]state.AgentState, int) {
 		return nil, 0
 	}
 	saved, active := m.state.Agents(key)
-	if key == orchestratorKey {
+	if _, orch := orchestratorAccountOf(key); orch {
 		return saved, active
 	}
 	kept := saved[:0:0]
@@ -3300,13 +3371,17 @@ func (m Model) restoreSessions() (Model, tea.Cmd) {
 			}
 			m.homeWSPath, m.homeWSKey, path, ok = home, key, home, true
 		}
-		if key == orchestratorKey {
-			dir, err := m.ctrl.EnsureOrchestratorDir()
+		account, isOrch := orchestratorAccountOf(key)
+		if isOrch {
+			if _, known := m.ctrl.cfg.ClaudeAccounts[account]; account != "" && !known {
+				continue // its account was removed from the config
+			}
+			dir, err := m.ctrl.EnsureOrchestratorDir(account)
 			if err != nil {
 				m.setError("restore error: " + err.Error())
 				continue
 			}
-			m.orchWSPath, path, ok = dir, dir, true
+			path, ok = dir, true
 		}
 		if !ok {
 			continue // the worktree is gone
@@ -3320,7 +3395,7 @@ func (m Model) restoreSessions() (Model, tea.Cmd) {
 		)
 		// The orchestrator workspace holds only the orchestrator, never a
 		// default agent.
-		if m, cmd, err = m.openWorkspaceBackground(key, path, key != orchestratorKey); err != nil {
+		if m, cmd, err = m.openWorkspaceBackground(key, path, !isOrch); err != nil {
 			m.setError("restore error (" + key + "): " + err.Error())
 			continue
 		}
@@ -5336,8 +5411,10 @@ func (m Model) pathToKey(path string) (string, bool) {
 	if m.homeWSPath != "" && filepath.Clean(m.homeWSPath) == path {
 		return m.homeWSKey, true
 	}
-	if m.orchWSPath != "" && filepath.Clean(m.orchWSPath) == path {
-		return orchestratorKey, true
+	for _, key := range m.mgr.Keys() {
+		if dir := m.orchDir(key); dir != "" && filepath.Clean(dir) == path {
+			return key, true
+		}
 	}
 	return "", false
 }
@@ -5372,9 +5449,11 @@ func (m Model) agentLocation(target *session.Session) (key, path string, ok bool
 			return key, path, true
 		}
 	}
-	if m.orchWSPath != "" {
-		if key, path, ok := match(orchestratorKey, m.orchWSPath); ok {
-			return key, path, true
+	for _, key := range m.mgr.Keys() {
+		if dir := m.orchDir(key); dir != "" {
+			if key, path, ok := match(key, dir); ok {
+				return key, path, true
+			}
 		}
 	}
 	return "", "", false

@@ -412,3 +412,89 @@ func TestControllerCreateFlattensSlashedName(t *testing.T) {
 		t.Fatalf("branch = %q, want feature/foo", wt.Branch)
 	}
 }
+
+// TestTranscriptsAcrossClaudeAccounts checks that a session is found whichever
+// account stored it, and that the default account follows CLAUDE_CONFIG_DIR.
+func TestTranscriptsAcrossClaudeAccounts(t *testing.T) {
+	base := t.TempDir()
+	defaultDir, privateDir := filepath.Join(base, "default"), filepath.Join(base, "private")
+	t.Setenv("CLAUDE_CONFIG_DIR", defaultDir)
+	for dir, id := range map[string]string{defaultDir: "work-id", privateDir: "home-id"} {
+		project := filepath.Join(dir, "projects", "-r")
+		if err := os.MkdirAll(project, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(project, id+".jsonl"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := &Controller{cfg: config.Config{ClaudeAccounts: map[string]config.ClaudeAccount{
+		"private": {ConfigDir: privateDir, Folders: []string{"/home"}},
+	}}}
+	for _, id := range []string{"work-id", "home-id"} {
+		if !c.transcriptExists(id) {
+			t.Errorf("transcript %s not found", id)
+		}
+		if _, ok := c.transcriptPath("/r", id); !ok {
+			t.Errorf("transcript path for %s not found", id)
+		}
+	}
+	if c.transcriptExists("missing") {
+		t.Error("a missing transcript was found")
+	}
+	if name, got := c.ClaudeAccount("/home/caretaker"); name != "private" || got != privateDir {
+		t.Errorf("ClaudeAccount = %q %q, want private %q", name, got, privateDir)
+	}
+	if name, got := c.ClaudeAccount("/work/api"); name != "" || got != "" {
+		t.Errorf("a repo outside every account should use the default, got %q %q", name, got)
+	}
+	if got, _ := defaultClaudeJSON(); got != filepath.Join(defaultDir, ".claude.json") {
+		t.Errorf("defaultClaudeJSON = %q", got)
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	home, _ := os.UserHomeDir()
+	if got, _ := defaultClaudeJSON(); got != filepath.Join(home, ".claude.json") {
+		t.Errorf("defaultClaudeJSON without CLAUDE_CONFIG_DIR = %q", got)
+	}
+}
+
+// TestAgentStatusesAcrossClaudeAccounts runs a fake claude that lists a
+// different session per CLAUDE_CONFIG_DIR, and one account whose call fails.
+func TestAgentStatusesAcrossClaudeAccounts(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "claude")
+	body := `#!/bin/sh
+case "$CLAUDE_CONFIG_DIR" in
+  "") echo '[{"pid":1,"cwd":"/work","status":"busy"}]' ;;
+  */private) echo '[{"pid":2,"cwd":"/home","status":"idle"}]' ;;
+  *) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	cfg := config.Default()
+	cfg.Agents.Claude = config.AgentProvider{Command: script}
+	cfg.ClaudeAccounts = map[string]config.ClaudeAccount{
+		"private": {ConfigDir: filepath.Join(dir, "private")},
+		"broken":  {ConfigDir: filepath.Join(dir, "broken")},
+	}
+	c := NewController(cfg)
+	got, err := c.AgentStatuses(t.Context(), []string{"private", "broken"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[1].Status != "busy" || got[2].Status != "idle" {
+		t.Fatalf("statuses = %+v, want pid 1 busy and pid 2 idle", got)
+	}
+	// An account with no open agents is not asked.
+	if got, _ := c.AgentStatuses(t.Context(), nil); len(got) != 1 {
+		t.Fatalf("without open accounts only the default should be polled: %+v", got)
+	}
+
+	cfg.Agents.Claude = config.AgentProvider{Command: filepath.Join(dir, "missing")}
+	if _, err := NewController(cfg).AgentStatuses(t.Context(), []string{"private"}); err == nil {
+		t.Fatal("every call failing should return an error")
+	}
+}

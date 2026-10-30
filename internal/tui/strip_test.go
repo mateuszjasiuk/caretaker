@@ -164,7 +164,7 @@ func TestAgentStripGroupsByClaudeAccount(t *testing.T) {
 		t.Fatalf("the private worktree should come last, want %q in %q", want, row)
 	}
 	raw := strings.SplitN(m.renderBar(), "\n", 2)[0]
-	tint := "48;2;60;56;54" // cAccountBg as a truecolor background
+	tint := "48;2;58;40;64" // cAccountBg as a truecolor background
 	at := strings.Index(raw, tint)
 	if at < 0 {
 		t.Fatalf("no account background in %q", raw)

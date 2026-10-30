@@ -32,7 +32,7 @@ var (
 	cSelBg  = lipgloss.Color("#665C54") // bg3 (strong selection)
 	// cAccountBg sits behind the agent strip's worktrees of an extra Claude
 	// account: quieter than a selection, but enough to read them as a block.
-	cAccountBg = lipgloss.Color("#3C3836") // bg1
+	cAccountBg = lipgloss.Color("#3A2840") // dark purple
 	cInk       = lipgloss.Color("#1D2021") // bg0_h (hard)
 )
 

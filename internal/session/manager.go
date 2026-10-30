@@ -630,15 +630,22 @@ func (m *Manager) Close(key string) {
 	}
 }
 
-// CloseAll terminates every session (call on exit).
+// CloseAll terminates every session (call on exit). It closes them all at once
+// and returns when every one has finished, so quitting waits at most closeGrace.
 func (m *Manager) CloseAll() {
 	m.mu.Lock()
 	all := m.spaces
 	m.spaces = make(map[string]*Workspace)
 	m.mu.Unlock()
+
+	var sessions []*Session
 	for _, ws := range all {
-		for _, s := range ws.all() {
-			s.Close()
-		}
+		sessions = append(sessions, ws.all()...)
+	}
+	for _, s := range sessions {
+		s.Close()
+	}
+	for _, s := range sessions {
+		<-s.done
 	}
 }

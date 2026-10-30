@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
+	"time"
 
 	"github.com/KCaverly/caretaker/internal/agent"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -55,6 +57,8 @@ type Session struct {
 	reportFocus   atomic.Bool // the program turned on focus reporting (mode 1004)
 	closed        atomic.Bool
 	closeOnce     sync.Once
+	exited        chan struct{} // closed once the program has exited and been reaped
+	done          chan struct{} // closed once Close has finished its teardown
 	companionOnce sync.Once
 	dirty         func(*Session) // signalled when the screen changes
 	companion     io.Closer
@@ -196,6 +200,8 @@ func StartSpec(spec Spec, dir string, w, h int, dirty func(*Session)) (*Session,
 		emu:       vt.NewSafeEmulator(w, h),
 		dirty:     dirty,
 		companion: spec.Companion,
+		exited:    make(chan struct{}),
+		done:      make(chan struct{}),
 	}
 	s.cursorVisible.Store(true)
 	s.renderCacheDirty.Store(true) // no cache yet: first Render must serialise
@@ -206,6 +212,7 @@ func StartSpec(spec Spec, dir string, w, h int, dirty func(*Session)) (*Session,
 	s.installFocus(s.emu)
 
 	go s.pumpOutput()    // pty → emulator (screen)
+	go s.reap()
 	go io.Copy(f, s.emu) //nolint:errcheck // emulator(SendKey) → pty (input)
 
 	return s, nil
@@ -255,7 +262,7 @@ func upsertEnv(env []string, entry string) []string {
 }
 
 // pumpOutput copies child output into the emulator and signals repaints. When
-// the pty closes (child exited or session closed), it reaps the process.
+// the pty closes (child exited or session closed), it marks the session closed.
 func (s *Session) pumpOutput() {
 	buf := make([]byte, 32*1024)
 	var guard stringGuard
@@ -271,7 +278,6 @@ func (s *Session) pumpOutput() {
 		if err != nil {
 			s.closed.Store(true)
 			s.signal()
-			_ = s.cmd.Wait()
 			s.closeCompanion()
 			return
 		}
@@ -474,17 +480,42 @@ func dropEnv(env []string, keys ...string) []string {
 	return out
 }
 
-// Close terminates the program and releases its resources.
+// Close asks the program to exit and releases its resources. It returns at
+// once; the teardown runs in the background and may take up to closeGrace.
 func (s *Session) Close() {
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
-		if s.cmd.Process != nil {
+		go s.stop(closeGrace)
+	})
+}
+
+// closeGrace is how long Close lets a program exit on SIGHUP before killing it.
+var closeGrace = time.Second
+
+// stop sends SIGHUP, then SIGKILL if the program is still running after
+// grace. SIGKILL can't be caught, so a program killed outright can't stop
+// the processes it started in their own process groups (Claude's background
+// shells, for one); they would keep running.
+func (s *Session) stop(grace time.Duration) {
+	defer close(s.done)
+
+	if s.cmd.Process != nil {
+		_ = s.cmd.Process.Signal(syscall.SIGHUP)
+		select {
+		case <-s.exited:
+		case <-time.After(grace):
 			_ = s.cmd.Process.Kill()
 		}
-		_ = s.pty.Close()
-		s.stopInputPump()
-		s.closeCompanion()
-	})
+	}
+	_ = s.pty.Close()
+	s.stopInputPump()
+	s.closeCompanion()
+}
+
+// reap waits for the program to exit, so Close knows when it is gone.
+func (s *Session) reap() {
+	_ = s.cmd.Wait()
+	close(s.exited)
 }
 
 // stopInputPump unblocks and terminates the `io.Copy(pty, emu)` input goroutine

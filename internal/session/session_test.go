@@ -961,3 +961,46 @@ func TestStartSpecSetsPWDToTheSessionDir(t *testing.T) {
 	defer s.Close()
 	waitFor(t, s, "PWD="+dir)
 }
+
+// TestCloseLetsTheProgramCleanUp checks that Close gives the program a chance to
+// stop what it started: it gets SIGHUP before it is killed.
+func TestCloseLetsTheProgramCleanUp(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "hup")
+	s, err := Start(Agent, "agent", t.TempDir(), []string{"sh", "-c",
+		`trap 'echo bye > "$0"; exit' HUP; echo ready; while :; do sleep 0.1; done`, marker},
+		80, 24, func(*Session) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, "ready")
+
+	s.Close()
+	waitForFileEquals(t, marker, "bye\n")
+	select {
+	case <-s.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close did not finish")
+	}
+}
+
+// TestCloseKillsAProgramThatIgnoresHUP checks that a program ignoring SIGHUP is
+// still killed once closeGrace runs out.
+func TestCloseKillsAProgramThatIgnoresHUP(t *testing.T) {
+	old := closeGrace
+	closeGrace = 100 * time.Millisecond
+	t.Cleanup(func() { closeGrace = old })
+
+	s, err := Start(Agent, "agent", t.TempDir(), []string{"sh", "-c",
+		`trap '' HUP; echo ready; while :; do sleep 0.1; done`}, 80, 24, func(*Session) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, "ready")
+
+	s.Close()
+	select {
+	case <-s.exited:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the program is still running after Close")
+	}
+}

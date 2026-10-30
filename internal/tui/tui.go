@@ -4227,7 +4227,7 @@ func (m Model) handlePicker(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleConfirmStopKey(msg)
 	}
 	if msg.String() == "ctrl+c" {
-		// Quitting runs mgr.CloseAll(), which SIGKILLs every hosted pty — every
+		// Quitting runs mgr.CloseAll(), which stops every hosted pty — every
 		// agent and nvim. Guard it only when a hosted agent is mid-task; the
 		// common (nothing busy) case quits with no friction.
 		if n := m.busyHostedAgents(""); n > 0 {

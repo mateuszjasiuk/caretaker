@@ -2387,7 +2387,7 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 			st = nameStyle
 		}
 		if m.current != nil && g.key == m.current.key {
-			st = st.Underline(true)
+			st = st.Foreground(cAccent).Underline(true)
 		}
 		return onAccount(st, g.account != "").Render(name)
 	}

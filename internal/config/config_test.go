@@ -159,6 +159,8 @@ func TestDefaultKeymap(t *testing.T) {
 		"palette":     d.Keys.Palette,
 		"global":      d.Keys.GlobalConfig,
 		"back":        d.Keys.Back,
+		"next_wt":     d.Keys.NextWorktree,
+		"prev_wt":     d.Keys.PrevWorktree,
 		"split_v":     d.Keys.TermSplitV,
 		"split_h":     d.Keys.TermSplitH,
 		"zoom":        d.Keys.TermZoom,
@@ -172,6 +174,7 @@ func TestDefaultKeymap(t *testing.T) {
 		"cycle": "alt+]", "cycle_back": "alt+[",
 		"goto_editor": "alt+1", "goto_agent": "alt+2", "goto_term": "alt+3",
 		"palette": "alt+a", "global": "alt+g", "prompt": "alt+y", "back": "alt+b",
+		"next_wt": "ctrl+l", "prev_wt": "ctrl+h",
 		"split_v": "alt+v", "split_h": "alt+s", "zoom": "alt+z", "close": "alt+x",
 		"focus_left": "alt+h", "focus_down": "alt+j", "focus_up": "alt+k", "focus_right": "alt+l",
 	}

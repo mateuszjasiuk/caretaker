@@ -1811,6 +1811,7 @@ func (m Model) renderHelp(h int) string {
 		row(m.keys.Attention, "jump to agent needing attention"),
 		row(m.keys.Highlight, "highlight this worktree in the bar (toggle)"),
 		row(m.keys.PrevAgent+" / "+m.keys.NextAgent, "prev / next agent"),
+		row(m.keys.PrevWorktree+" / "+m.keys.NextWorktree, "prev / next worktree"),
 	)
 	if m.usageEnabled() {
 		rows = append(rows, row(m.keys.Usage, "usage limits"))
@@ -2468,8 +2469,7 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 	return "", nil
 }
 
-// stripClick handles a left click on the agent strip. A worktree with an agent
-// that needs attention opens that agent; any other opens the worktree.
+// stripClick handles a left click on the agent strip.
 func (m Model) stripClick(x, y int) (tea.Model, tea.Cmd, bool) {
 	if y != 0 {
 		return m, nil, false
@@ -2479,20 +2479,24 @@ func (m Model) stripClick(x, y int) (tea.Model, tea.Cmd, bool) {
 		if x < it.start || x >= it.end {
 			continue
 		}
-		g := it.group
-		for _, a := range g.agents {
-			if a.attn != attnNone && a.attn == g.attn {
-				mm, cmd := m.focusBoardAgent(a)
-				return mm, cmd, true
-			}
-		}
-		if m.current != nil && m.current.key == g.key {
-			return m, nil, true
-		}
-		mm, cmd := m.activate(g.repo, g.worktree, g.path)
+		mm, cmd := m.openStripGroup(it.group)
 		return mm, cmd, true
 	}
 	return m, nil, false
+}
+
+// openStripGroup opens a worktree from the agent strip. A worktree with an agent
+// that needs attention opens that agent; any other opens the worktree.
+func (m Model) openStripGroup(g agentGroup) (tea.Model, tea.Cmd) {
+	for _, a := range g.agents {
+		if a.attn != attnNone && a.attn == g.attn {
+			return m.focusBoardAgent(a)
+		}
+	}
+	if m.current != nil && m.current.key == g.key {
+		return m, nil
+	}
+	return m.activate(g.repo, g.worktree, g.path)
 }
 
 // onAccount puts st on the extra-account background when on is true.

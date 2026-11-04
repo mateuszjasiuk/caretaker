@@ -132,6 +132,84 @@ func TestAgentStripClickOpensWorktree(t *testing.T) {
 	}
 }
 
+func pressCtrl(t *testing.T, m Model, key rune) Model {
+	t.Helper()
+	mm, _ := m.handleKey(tea.KeyPressMsg{Code: key, Mod: tea.ModCtrl})
+	return mm.(Model)
+}
+
+func TestWorktreeKeysMoveLikeTabsAndWrap(t *testing.T) {
+	m := stripModel(t, 120, "alpha", "beta", "gamma") // gamma is current
+
+	want := []struct {
+		key  rune
+		name string
+	}{
+		{'l', "alpha"}, // wraps past the last
+		{'l', "beta"},
+		{'h', "alpha"},
+		{'h', "gamma"}, // wraps past the first
+	}
+	for i, w := range want {
+		m = pressCtrl(t, m, w.key)
+		if m.current == nil || m.current.worktree != w.name {
+			t.Fatalf("press %d: current = %v, want %s", i, m.current, w.name)
+		}
+	}
+}
+
+func TestWorktreeKeysReachWorktreesHiddenFromTheBar(t *testing.T) {
+	m := stripModel(t, 60, "alpha-long-worktree", "beta-long-worktree", "gamma-long-worktree", "delta-long-worktree")
+	_, items := m.agentStripLayout()
+	if len(items) >= 4 {
+		t.Fatalf("test needs a bar too narrow for every worktree, shows %d", len(items))
+	}
+
+	seen := map[string]bool{}
+	for range 4 {
+		m = pressCtrl(t, m, 'l')
+		seen[m.current.worktree] = true
+	}
+	if len(seen) != 4 {
+		t.Fatalf("four presses should visit all four worktrees, saw %v", seen)
+	}
+}
+
+func TestWorktreeKeysWithoutCurrentWorktree(t *testing.T) {
+	m := stripModel(t, 120, "alpha", "beta", "gamma")
+	m.current, m.screen = nil, screenPicker
+	if got := pressCtrl(t, m, 'l'); got.current == nil || got.current.worktree != "alpha" {
+		t.Fatalf("ctrl+l should open the first worktree, current = %v", got.current)
+	}
+	if got := pressCtrl(t, m, 'h'); got.current == nil || got.current.worktree != "gamma" {
+		t.Fatalf("ctrl+h should open the last worktree, current = %v", got.current)
+	}
+}
+
+func TestWorktreeKeysLeavePromptsAlone(t *testing.T) {
+	m := stripModel(t, 120, "alpha", "beta")
+	m.screen = screenPicker
+	m.mode = modeCreateName
+	if got := pressCtrl(t, m, 'h'); got.current.worktree != "beta" || got.mode != modeCreateName {
+		t.Fatalf("ctrl+h in the name input must not switch: %s, mode %v", got.current.worktree, got.mode)
+	}
+
+	m.screen = screenEditor
+	m.mode = modeConfirmTermClose
+	if got := pressCtrl(t, m, 'l'); got.current.worktree != "beta" {
+		t.Fatalf("ctrl+l in a confirm prompt must not switch: %s", got.current.worktree)
+	}
+}
+
+func TestWorktreeKeysFireThroughHelp(t *testing.T) {
+	m := stripModel(t, 120, "alpha", "beta")
+	m.helpOpen = true
+	got := pressCtrl(t, m, 'l')
+	if got.helpOpen || got.current.worktree != "alpha" {
+		t.Fatalf("ctrl+l should close help and move, help %v, current %s", got.helpOpen, got.current.worktree)
+	}
+}
+
 func TestAgentStripOff(t *testing.T) {
 	m := stripModel(t, 120, "alpha")
 	m.agentStrip = false

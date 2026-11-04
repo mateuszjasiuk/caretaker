@@ -127,6 +127,8 @@ picker      = "ctrl+g" # return to the CT picker
 palette     = "alt+a"  # agent board: focus, create, restart, or remove agents
 next_agent  = "f4"     # next agent in the active worktree
 prev_agent  = "f3"     # previous agent in the active worktree
+next_worktree = "ctrl+l" # next worktree in the bar, like tabs (wraps)
+prev_worktree = "ctrl+h" # previous worktree in the bar (wraps)
 global_config = "alt+g" # open the home-directory workspace
 orchestrator = "alt+o" # open the orchestrator agent (see below)
 attention   = "alt+n"  # jump to the agent needing attention (cycles on repeat)
@@ -407,7 +409,9 @@ dim when idle. White means "look at this". A finished agent you have looked at t
 ("your turn" in the board) until it works again. **`ctrl+q`** toggles the current worktree between
 white and dim: use it to dismiss a "your turn", or to flag any worktree you want to come back to.
 A worktree you flag stays white until you press `ctrl+q` again. `x` in the board dismisses one
-agent's "your turn". The current worktree is underlined. Click a name to jump there. With more than one
+agent's "your turn". The current worktree is underlined. Click a name to jump there, or press
+**`ctrl+h`** / **`ctrl+l`** to move left / right through the worktrees like tabs (wrapping). ct takes
+these two keys from the programs inside it, such as nvim and the shell. With more than one
 repo open, each repo's worktrees follow its name (`front: beta · zeta │ back: alpha`); the repo
 names are hidden first when the bar is short of space.
 

@@ -2660,6 +2660,12 @@ func (m Model) paletteCommands() []paletteCmd {
 			paletteCmd{title: "previous agent", hint: m.keys.PrevAgent, run: func(m Model) (tea.Model, tea.Cmd) { return m.rotateAgent(-1) }},
 		)
 	}
+	if len(m.stripGroups()) >= 2 {
+		cmds = append(cmds,
+			paletteCmd{title: "next worktree", hint: m.keys.NextWorktree, run: func(m Model) (tea.Model, tea.Cmd) { return m.rotateWorktree(+1) }},
+			paletteCmd{title: "previous worktree", hint: m.keys.PrevWorktree, run: func(m Model) (tea.Model, tea.Cmd) { return m.rotateWorktree(-1) }},
+		)
+	}
 	cmds = append(cmds, paletteCmd{title: "open home workspace", hint: m.keys.GlobalConfig, run: func(m Model) (tea.Model, tea.Cmd) { return m.activateGlobalConfig() }})
 	cmds = append(cmds, paletteCmd{title: "open orchestrator", hint: m.keys.Orchestrator, run: func(m Model) (tea.Model, tea.Cmd) { return m.openOrchestrator() }})
 	cmds = append(cmds, paletteCmd{title: "new orchestrator session", run: func(m Model) (tea.Model, tea.Cmd) { return m.resetOrchestrator() }})
@@ -3509,6 +3515,16 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == m.keys.Orchestrator {
 		return m.openOrchestrator()
 	}
+	// A picker text input or a confirm prompt keeps these keys: ctrl+h deletes a
+	// character there.
+	if !m.confirmActive() && (m.screen != screenPicker || m.mode == modeNormal) {
+		switch msg.String() {
+		case m.keys.NextWorktree:
+			return m.rotateWorktree(+1)
+		case m.keys.PrevWorktree:
+			return m.rotateWorktree(-1)
+		}
+	}
 	// Direct-jump keys work from session screens and from the picker whenever a
 	// workspace is active; they no-op with none.
 	switch msg.String() {
@@ -3630,6 +3646,7 @@ func (m Model) isReservedActionKey(s string) bool {
 	switch s {
 	case m.keys.Cycle, m.keys.CycleBack, m.keys.Picker, m.keys.Palette,
 		m.keys.Attention, m.keys.Highlight, m.keys.GlobalConfig, m.keys.Orchestrator, m.keys.NextAgent, m.keys.PrevAgent,
+		m.keys.NextWorktree, m.keys.PrevWorktree,
 		m.keys.CommandPalette, m.keys.GotoEditor, m.keys.GotoAgent, m.keys.GotoTerm:
 		return true
 	}
@@ -3843,6 +3860,28 @@ func (m Model) rotateAgent(delta int) (tea.Model, tea.Cmd) {
 	m.screen = screenAgent
 	m.clearWorkspaceAttention()
 	return m, m.saveAgents(m.current.key)
+}
+
+// rotateWorktree moves by delta (wrapping) through the worktrees in the order of
+// the bar's agent strip, including any the bar has no room to show, and opens
+// that worktree the way a click on it does. With no current worktree in the
+// strip, moving right lands on the first and moving left on the last.
+func (m Model) rotateWorktree(delta int) (tea.Model, tea.Cmd) {
+	groups := m.stripGroups()
+	n := len(groups)
+	if n == 0 {
+		return m, nil
+	}
+
+	cur := -1
+	if m.current != nil {
+		cur = slices.IndexFunc(groups, func(g agentGroup) bool { return g.key == m.current.key })
+	}
+	if cur < 0 && delta < 0 {
+		cur = 0
+	}
+
+	return m.openStripGroup(groups[((cur+delta)%n+n)%n])
 }
 
 // launchAgent spawns a new agent from the board's new-agent form, honouring the

@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1002,5 +1004,59 @@ func TestCloseKillsAProgramThatIgnoresHUP(t *testing.T) {
 	case <-s.exited:
 	case <-time.After(3 * time.Second):
 		t.Fatal("the program is still running after Close")
+	}
+}
+
+// startWithStuckChild starts a program whose child survives the SIGHUP that
+// ends the program, as a stuck nvim --embed does, and returns the child's pid.
+func startWithStuckChild(t *testing.T, kind Kind) (*Session, int) {
+	t.Helper()
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "child.pid")
+	s, err := Start(kind, "stuck", dir, []string{"sh", "-c",
+		`(trap '' HUP; exec sleep 60) & echo $! > ` + pidFile + `; echo ready; wait`}, 80, 24, func(*Session) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, "ready")
+
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+	return s, pid
+}
+
+func TestCloseKillsAnEditorChildThatOutlivesIt(t *testing.T) {
+	old := serverGrace
+	serverGrace = 100 * time.Millisecond
+	t.Cleanup(func() { serverGrace = old })
+
+	s, child := startWithStuckChild(t, Editor)
+	s.Close()
+	<-s.done
+
+	deadline := time.Now().Add(3 * time.Second)
+	for syscall.Kill(child, 0) == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the editor's child is still running after Close")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// An agent's background processes are not ct's to stop.
+func TestCloseLeavesAnAgentChildRunning(t *testing.T) {
+	s, child := startWithStuckChild(t, Agent)
+	s.Close()
+	<-s.done
+
+	if err := syscall.Kill(child, 0); err != nil {
+		t.Fatalf("the agent's child should keep running: %v", err)
 	}
 }

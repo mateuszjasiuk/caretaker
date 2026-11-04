@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -481,7 +482,8 @@ func dropEnv(env []string, keys ...string) []string {
 }
 
 // Close asks the program to exit and releases its resources. It returns at
-// once; the teardown runs in the background and may take up to closeGrace.
+// once; the teardown runs in the background and may take up to closeGrace, plus
+// serverGrace for an editor whose server has not exited.
 func (s *Session) Close() {
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
@@ -492,14 +494,27 @@ func (s *Session) Close() {
 // closeGrace is how long Close lets a program exit on SIGHUP before killing it.
 var closeGrace = time.Second
 
+// serverGrace is how long an editor's server may keep exiting after the editor
+// has gone. Neovim can use some of it to shut down language servers.
+var serverGrace = 500 * time.Millisecond
+
 // stop sends SIGHUP, then SIGKILL if the program is still running after
 // grace. SIGKILL can't be caught, so a program killed outright can't stop
 // the processes it started in their own process groups (Claude's background
 // shells, for one); they would keep running.
+//
+// Neovim's screen runs its server (nvim --embed) as a child in its own session.
+// That server can block on "Press ENTER" while exiting, with no screen left to
+// answer it, and then never exits. So an editor's children are killed if they
+// outlive it. Other kinds keep theirs.
 func (s *Session) stop(grace time.Duration) {
 	defer close(s.done)
 
+	var servers []int
 	if s.cmd.Process != nil {
+		if s.Kind == Editor {
+			servers = s.childPids()
+		}
 		_ = s.cmd.Process.Signal(syscall.SIGHUP)
 		select {
 		case <-s.exited:
@@ -510,6 +525,48 @@ func (s *Session) stop(grace time.Duration) {
 	_ = s.pty.Close()
 	s.stopInputPump()
 	s.closeCompanion()
+	killAfter(servers, serverGrace)
+}
+
+// childPids lists the program's direct children. It returns nothing once the
+// program has exited, because its pid may then belong to another process, or if
+// pgrep is missing.
+func (s *Session) childPids() []int {
+	select {
+	case <-s.exited:
+		return nil
+	default:
+	}
+
+	out, err := exec.Command("pgrep", "-P", strconv.Itoa(s.cmd.Process.Pid)).Output()
+	if err != nil {
+		return nil
+	}
+	var pids []int
+	for _, field := range strings.Fields(string(out)) {
+		if pid, err := strconv.Atoi(field); err == nil {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+// killAfter waits up to grace for the processes to exit, then kills the rest.
+func killAfter(pids []int, grace time.Duration) {
+	deadline := time.Now().Add(grace)
+	for _, pid := range pids {
+		p, err := os.FindProcess(pid)
+		if err != nil {
+			continue
+		}
+		for p.Signal(syscall.Signal(0)) == nil {
+			if time.Now().After(deadline) {
+				_ = p.Kill()
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
 }
 
 // reap waits for the program to exit, so Close knows when it is gone.

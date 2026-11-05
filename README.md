@@ -476,6 +476,22 @@ Press **`alt+p`** (anywhere) for the **command palette**: a fuzzy-searchable lis
 with its live key shown alongside, so you can run any action — and passively learn its chord —
 without memorizing the reserved keys; `enter` runs the selected row, `esc` closes.
 
+### Feature managers
+
+A feature split into several sessions can have its own manager: an ordinary
+worktree session that plans the feature, starts the other sessions with `ct ctl`
+and tracks what blocks what. Any session inside ct can run `ct ctl`, because it
+inherits `CT_SOCKET`, so a manager needs no special support. Start one with a
+skill as its first prompt:
+
+```sh
+ct ctl spawn <repo> <name> --prompt "/feature-coordinator <ticket>"
+```
+
+To stack a new session's branch with `gh stack`, spawn it on the top branch, then
+run `gh stack add <branch>` from the top branch's worktree. `gh stack` refuses
+from any other worktree.
+
 ## Stacked PRs
 
 ct treats each commit on a worktree branch as its own GitHub PR, chained bottom-to-top and

@@ -309,6 +309,8 @@ type Model struct {
 	keys       config.Keys
 	iconMode   string
 	agentStrip bool // list open worktrees after the bar icons
+	// stacksExpanded shows every gh stack in full in the agent strip.
+	stacksExpanded bool
 
 	screen     screen
 	current    *workspaceRef
@@ -587,8 +589,10 @@ func New(ctrl *Controller, mgr *session.Manager) Model {
 		defaultProvider = providers[0]
 	}
 
+	saved := state.Load()
 	return Model{
-		ctrl: ctrl, mgr: mgr, state: state.Load(),
+		ctrl: ctrl, mgr: mgr, state: saved,
+		stacksExpanded: saved.StacksExpanded,
 		keys:           ctrl.Keys(),
 		iconMode:       ctrl.DisplayIcons(),
 		agentStrip:     ctrl.AgentStrip(),
@@ -893,7 +897,8 @@ func (m Model) refreshGhStacksCmd() tea.Cmd {
 	}
 }
 
-// applyGhStacks stores the re-read repos' gh stack state.
+// applyGhStacks stores the re-read repos' gh stack state and updates the deck's
+// order, keeping the cursor on the same worktree.
 func (m Model) applyGhStacks(msg ghStacksMsg) Model {
 	if len(msg.stacks) == 0 {
 		return m
@@ -906,6 +911,15 @@ func (m Model) applyGhStacks(msg ghStacksMsg) Model {
 	maps.Copy(stacks, msg.stacks)
 	maps.Copy(mods, msg.mods)
 	m.ghStacks, m.ghStackMods = stacks, mods
+
+	selected, ok := m.selectedActive()
+	m.recomputeActive()
+	if ok {
+		key := wsKey(selected.repo.Name, selected.view.WT.Name)
+		if i := slices.IndexFunc(m.active, func(it activeItem) bool { return wsKey(it.repo.Name, it.view.WT.Name) == key }); i >= 0 {
+			m.activeCursor = i
+		}
+	}
 	return m
 }
 
@@ -2069,7 +2083,9 @@ type agentGroup struct {
 	busy                      bool      // some agent is working
 	highlighted               bool      // flagged with the highlight key
 	opened                    int64
-	account                   string // Claude account; set by stripGroups only
+	account                   string           // Claude account; set by stripGroups only
+	stack                     ghstack.Position // set by stripGroups only; zero outside a gh stack
+	members                   []agentGroup     // the worktrees of a collapsed gh stack
 }
 
 // agentGroup collects the agent rows of one open workspace, in pool order. It
@@ -2112,8 +2128,8 @@ func (m Model) agentGroup(key, repoName, wtName, path string) (agentGroup, bool)
 // stripGroups lists every open workspace for the bar's agent strip. Unlike the
 // board and the deck, the order is fixed (repos in deck order, worktrees by
 // name, then the home workspace) so items don't move when you switch worktrees
-// or an agent's status changes; only their colour does. Workspaces of extra
-// Claude accounts follow the default account's, one account at a time, so
+// or an agent's status changes; only their colour does. A gh stack's worktrees
+// stay together, in stack order. Workspaces of extra Claude accounts follow the default account's, one account at a time, so
 // each account reads as one block.
 func (m Model) stripGroups() []agentGroup {
 	active := slices.Clone(m.active)
@@ -2132,7 +2148,7 @@ func (m Model) stripGroups() []agentGroup {
 
 	seen := map[string]bool{}
 	var groups []agentGroup
-	add := func(key, repoName, wtName, path string) {
+	add := func(key, repoName, wtName, path, branch string) {
 		if key == "" || seen[key] {
 			return
 		}
@@ -2140,18 +2156,20 @@ func (m Model) stripGroups() []agentGroup {
 		// A workspace whose only agent is the orchestrator has nothing to show.
 		if g, ok := m.agentGroup(key, repoName, wtName, path); ok && len(g.agents) > 0 {
 			g.account, _ = m.claudeAccountFor(path)
+			g.stack, _ = m.ghStackPosition(repoName, branch)
 			groups = append(groups, g)
 		}
 	}
 	for _, it := range active {
-		add(wsKey(it.repo.Name, it.view.WT.Name), it.repo.Name, it.view.WT.Name, it.view.WT.Path)
+		add(wsKey(it.repo.Name, it.view.WT.Name), it.repo.Name, it.view.WT.Name, it.view.WT.Path, it.view.WT.Branch)
 	}
 	if m.current != nil {
-		add(m.current.key, m.current.repo, m.current.worktree, m.current.path)
+		add(m.current.key, m.current.repo, m.current.worktree, m.current.path, "")
 	}
 	if m.homeWSKey != "" {
-		add(m.homeWSKey, "~", "config", m.homeWSPath)
+		add(m.homeWSKey, "~", "config", m.homeWSPath, "")
 	}
+	groups = groupStripStacks(groups)
 	sort.SliceStable(groups, func(i, j int) bool { return groups[i].account < groups[j].account })
 	return groups
 }
@@ -2743,6 +2761,7 @@ func (m Model) paletteCommands() []paletteCmd {
 			paletteCmd{title: "previous worktree", hint: m.keys.PrevWorktree, run: func(m Model) (tea.Model, tea.Cmd) { return m.rotateWorktree(-1) }},
 		)
 	}
+	cmds = append(cmds, paletteCmd{title: "collapse or expand stacks in the bar", hint: m.keys.ToggleStacks, run: func(m Model) (tea.Model, tea.Cmd) { return m.toggleStacks() }})
 	cmds = append(cmds, paletteCmd{title: "open home workspace", hint: m.keys.GlobalConfig, run: func(m Model) (tea.Model, tea.Cmd) { return m.activateGlobalConfig() }})
 	cmds = append(cmds, paletteCmd{title: "open orchestrator", hint: m.keys.Orchestrator, run: func(m Model) (tea.Model, tea.Cmd) { return m.openOrchestrator() }})
 	cmds = append(cmds, paletteCmd{title: "new orchestrator session", run: func(m Model) (tea.Model, tea.Cmd) { return m.resetOrchestrator() }})
@@ -3600,6 +3619,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.rotateWorktree(+1)
 		case m.keys.PrevWorktree:
 			return m.rotateWorktree(-1)
+		case m.keys.ToggleStacks:
+			return m.toggleStacks()
 		}
 	}
 	// Direct-jump keys work from session screens and from the picker whenever a
@@ -3723,7 +3744,7 @@ func (m Model) isReservedActionKey(s string) bool {
 	switch s {
 	case m.keys.Cycle, m.keys.CycleBack, m.keys.Picker, m.keys.Palette,
 		m.keys.Attention, m.keys.Highlight, m.keys.GlobalConfig, m.keys.Orchestrator, m.keys.NextAgent, m.keys.PrevAgent,
-		m.keys.NextWorktree, m.keys.PrevWorktree,
+		m.keys.NextWorktree, m.keys.PrevWorktree, m.keys.ToggleStacks,
 		m.keys.CommandPalette, m.keys.GotoEditor, m.keys.GotoAgent, m.keys.GotoTerm:
 		return true
 	}
@@ -3942,9 +3963,10 @@ func (m Model) rotateAgent(delta int) (tea.Model, tea.Cmd) {
 // rotateWorktree moves by delta (wrapping) through the worktrees in the order of
 // the bar's agent strip, including any the bar has no room to show, and opens
 // that worktree the way a click on it does. With no current worktree in the
-// strip, moving right lands on the first and moving left on the last.
+// strip, moving right lands on the first and moving left on the last. A collapsed
+// gh stack is one stop.
 func (m Model) rotateWorktree(delta int) (tea.Model, tea.Cmd) {
-	groups := m.stripGroups()
+	groups := m.stripEntries()
 	n := len(groups)
 	if n == 0 {
 		return m, nil
@@ -5452,6 +5474,10 @@ func (m *Model) recomputeActive() {
 			views = append(views, wv)
 		}
 		m.sortByRecency(g.Repo.Name, views)
+		views = keepStacksTogether(views, func(wv WorktreeView) (string, int) {
+			pos, _ := m.ghStackPosition(g.Repo.Name, wv.WT.Branch)
+			return pos.Bottom, pos.Index
+		})
 		if main != nil && (len(views) > 0 || m.mainWasUsed(g.Repo.Name, *main)) {
 			views = append([]WorktreeView{*main}, views...)
 		}

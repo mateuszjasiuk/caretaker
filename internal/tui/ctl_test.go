@@ -623,3 +623,48 @@ func TestGhStackRefreshFollowsTheFile(t *testing.T) {
 		t.Fatal("a removed file should clear the stack")
 	}
 }
+
+// deckStackModel has worktrees a and b in repo r, in one gh stack with b at the
+// bottom, so stack order differs from the deck's usual order.
+func deckStackModel(t *testing.T) Model {
+	t.Helper()
+	m, dir := ghStackModel(t)
+	writeGhStack(t, dir, `[{"branch": "b"}, {"branch": "a", "pullRequest": {"number": 11}}]`)
+	return refreshGhStacks(t, m)
+}
+
+func TestDeckKeepsStackTogetherUnderHeader(t *testing.T) {
+	m := deckStackModel(t)
+
+	lines, rowItem := m.activeDisplay(60)
+	var header, first, second = -1, -1, -1
+	for i, line := range lines {
+		plain := ansi.Strip(line)
+		switch {
+		case strings.Contains(plain, "⛁ #7"):
+			header = i
+			if rowItem[i] != -1 {
+				t.Fatalf("the cursor must skip the stack header: %v", rowItem)
+			}
+		case strings.Contains(plain, "1/2"):
+			first = i
+		case strings.Contains(plain, "2/2 #11"):
+			second = i
+		}
+	}
+	if header < 0 || first != header+1 || second <= first {
+		t.Fatalf("want header, then 1/2, then 2/2 #11, got:\n%s", ansi.Strip(strings.Join(lines, "\n")))
+	}
+}
+
+func TestDeckCursorStaysOnWorktreeWhenStacksChange(t *testing.T) {
+	m, dir := ghStackModel(t)
+	m.selectActiveByKey("r/a")
+
+	writeGhStack(t, dir, `[{"branch": "b"}, {"branch": "a"}]`)
+	m = refreshGhStacks(t, m)
+
+	if it, ok := m.selectedActive(); !ok || it.view.WT.Name != "a" {
+		t.Fatalf("the cursor should stay on a, got %+v", it)
+	}
+}

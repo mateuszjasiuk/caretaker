@@ -129,6 +129,7 @@ next_agent  = "f4"     # next agent in the active worktree
 prev_agent  = "f3"     # previous agent in the active worktree
 next_worktree = "ctrl+l" # next worktree in the bar, like tabs (wraps)
 prev_worktree = "ctrl+h" # previous worktree in the bar (wraps)
+toggle_stacks = "ctrl+y" # collapse or expand gh stacks in the bar
 global_config = "alt+g" # open the home-directory workspace
 orchestrator = "alt+o" # open the orchestrator agent (see below)
 attention   = "alt+n"  # jump to the agent needing attention (cycles on repeat)
@@ -495,6 +496,13 @@ from any other worktree.
 For a branch in a `gh stack`, the bar's label shows its position and PR, such as
 `4/5 #1366`, and `ct ctl list` shows `stack=#1369 4/5  pr=#1366`. ct reads this
 from `.git/gh-stack`; it never changes a stack.
+
+The bar's strip keeps a stack's open worktrees together, bottom to top, and
+collapses each stack you're not in to one item (`⛁ #1369`, with its most urgent
+state). `toggle_stacks` shows them all in full instead; ct remembers the choice.
+`next_worktree` and `prev_worktree` treat a collapsed stack as one stop and open the
+worktree you used last in it. The deck lists every stack in full under a `⛁ #1369`
+header, with each worktree's position and PR.
 
 ## Stacked PRs
 

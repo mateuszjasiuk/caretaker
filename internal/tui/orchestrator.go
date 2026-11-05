@@ -67,7 +67,7 @@ You act on ct through its control command. Run it with Bash:
   %[1]s ctl reopen <repo/name>           stop and open again, to restart its agents on the same conversations
   %[1]s ctl remove <repo/name>           ask the user to confirm deleting the worktree
 
-Add --json to list or summary when you want the raw fields. Worktrees are named repo/name. Agent status is busy, idle, or waiting; "waiting" means the agent stopped for a permission prompt or a question only the user can answer.
+Add --json to list or summary when you want the raw fields. Worktrees are named repo/name; repo/main is the repo's main checkout, which works with every command except spawn and remove. Agent status is busy, idle, or waiting; "waiting" means the agent stopped for a permission prompt or a question only the user can answer.
 
 The repos, each with its main checkout (you can read it) and its plan file:
 

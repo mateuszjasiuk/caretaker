@@ -260,7 +260,11 @@ The repo list is fixed when the session starts. After you add a repo, pick
 "new orchestrator session" (or restart ct) so the orchestrator knows about it.
 
 A repo's main checkout, the `(main)` row of the deck, is an ordinary worktree:
-open it to get a plain agent on the main branch.
+open it to get a plain agent on the main branch. The row is first in its repo.
+A repo with no other worktree shows it only once it has been opened: type `main`
+as the name of a new session, use "open main of <repo>" in the command palette,
+or run `ct ctl open <repo>/main`. `ct ctl` calls it `<repo>/main`, and refuses to
+spawn or remove it.
 
 Press `alt+o`, click the orchestrator icon in the bar's tab row (between the
 agent and terminal icons), or pick "open orchestrator" in the command palette

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/KCaverly/caretaker/internal/agent"
 	"github.com/KCaverly/caretaker/internal/config"
 	"github.com/KCaverly/caretaker/internal/ctl"
@@ -74,16 +76,19 @@ func pending(req ctl.Request) (*ctl.Pending, <-chan ctl.Response) {
 	return p, ch
 }
 
-func TestCtlListSkipsMainAndReportsQueue(t *testing.T) {
+func TestCtlListShowsMainFirstAndReportsQueue(t *testing.T) {
 	m := ctlModel(t)
 	m.state.Enqueue("r/b", "later")
 	p, ch := pending(ctl.Request{Op: ctl.OpList})
 	m.handleCtl(p)
 	resp := <-ch
-	if !resp.OK || len(resp.Worktrees) != 2 {
+	if !resp.OK || len(resp.Worktrees) != 3 {
 		t.Fatalf("resp %+v", resp)
 	}
-	a, b := resp.Worktrees[0], resp.Worktrees[1]
+	if main := resp.Worktrees[0]; main.Key != "r/main" || main.Base != "" {
+		t.Fatalf("main = %+v", main)
+	}
+	a, b := resp.Worktrees[1], resp.Worktrees[2]
 	if a.Key != "r/a" || a.Base != "main" || a.Ahead != 2 || a.Open {
 		t.Fatalf("a = %+v", a)
 	}
@@ -391,5 +396,141 @@ func TestOrchestratorPerClaudeAccount(t *testing.T) {
 	}
 	if got := m.orchDir(orchestratorKeyFor("private")); got != dir {
 		t.Errorf("orchDir = %q, want %q", got, dir)
+	}
+}
+
+// mainModel is ctlModel plus a repo that has only its main checkout.
+func mainModel(t *testing.T) Model {
+	t.Helper()
+	m := ctlModel(t)
+	m.groups = append(m.groups, Group{
+		Repo: repo.Repo{Name: "solo", Path: "/solo"},
+		Worktrees: []WorktreeView{
+			{WT: repo.Worktree{Repo: "solo", Name: "(main)", Path: "/solo", IsMain: true}},
+		},
+	})
+	m.recomputeActive()
+	return m
+}
+
+func TestMainRowFirstAndOnlyWhenUsed(t *testing.T) {
+	m := mainModel(t)
+	if len(m.active) != 3 || !m.active[0].view.WT.IsMain {
+		t.Fatalf("main should be first in a repo with worktrees: %+v", m.active)
+	}
+	if _, listed := m.activeByKey("solo/(main)"); listed {
+		t.Fatal("a repo with only a never-opened main should have no row")
+	}
+
+	m.state.Touch("r/b") // opening a worktree must not move it above main
+	m.state.Touch("solo/(main)")
+	m.recomputeActive()
+	if !m.active[0].view.WT.IsMain || m.active[1].view.WT.Name != "b" {
+		t.Fatalf("main should stay first: %+v", m.active)
+	}
+	if _, listed := m.activeByKey("solo/(main)"); !listed {
+		t.Fatal("a main opened before should have a row")
+	}
+}
+
+func TestPaletteOffersUnlistedMain(t *testing.T) {
+	m := mainModel(t)
+	has := func(m Model, title string) bool {
+		for _, c := range m.paletteCommands() {
+			if c.title == title {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(m, "open main of solo") || has(m, "open main of r") {
+		t.Fatal("the palette should offer main only for a repo the deck doesn't list it for")
+	}
+
+	m.state.Touch("solo/(main)")
+	m.recomputeActive()
+	if has(m, "open main of solo") {
+		t.Fatal("a listed main needs no extra palette row")
+	}
+}
+
+func TestCtlReachesMainByAlias(t *testing.T) {
+	m := mainModel(t)
+	for _, key := range []string{"r/main", "r/(main)", "solo/main"} {
+		p, ch := pending(ctl.Request{Op: ctl.OpStop, Worktree: key})
+		m.handleCtl(p)
+		if resp := <-ch; resp.OK || !strings.Contains(resp.Error, "is not open") {
+			t.Fatalf("%s should be found, and closed: %+v", key, resp)
+		}
+	}
+}
+
+func TestCtlRefusesSpawnAndRemoveOfMain(t *testing.T) {
+	m := mainModel(t)
+	p, ch := pending(ctl.Request{Op: ctl.OpSpawn, Repo: "r", Name: "main", Text: "x"})
+	m.handleCtl(p)
+	if resp := <-ch; resp.OK || !strings.Contains(resp.Error, "main checkout") {
+		t.Fatalf("spawn: %+v", resp)
+	}
+
+	p, ch = pending(ctl.Request{Op: ctl.OpRemove, Worktree: "r/main"})
+	mm, _ := m.handleCtl(p)
+	if resp := <-ch; resp.OK || !strings.Contains(resp.Error, "can't be removed") {
+		t.Fatalf("remove: %+v", resp)
+	}
+	if mm.(Model).ctlRemoveKey != "" {
+		t.Fatal("a refused remove must not wait for the user")
+	}
+}
+
+func TestRealWorktreeNamedMainKeepsItsName(t *testing.T) {
+	m := ctlModel(t)
+	m.groups[0].Worktrees = append(m.groups[0].Worktrees, WorktreeView{
+		WT: repo.Worktree{Repo: "r", Name: "main", Path: "/r/.worktrees/main", Branch: "main"},
+	})
+	m.recomputeActive()
+
+	if got := m.ctlKey("r/main"); got != "r/main" {
+		t.Fatalf("r/main should reach the real worktree, got %q", got)
+	}
+	keys := map[string]bool{}
+	for _, w := range m.ctlWorktrees() {
+		keys[w.Key] = true
+	}
+	if !keys["r/main"] || !keys["r/(main)"] {
+		t.Fatalf("both should be listed under their own names: %v", keys)
+	}
+}
+
+func TestNewSessionNamedMainOpensTheCheckout(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	dir := t.TempDir()
+	m := New(&Controller{cfg: config.Config{
+		Editor: "cat", Agent: "cat", Shell: "sh", Keys: config.Default().Keys,
+	}}, session.NewManager())
+	t.Cleanup(m.mgr.CloseAll)
+	m.groups = []Group{{
+		Repo: repo.Repo{Name: "solo", Path: dir},
+		Worktrees: []WorktreeView{
+			{WT: repo.Worktree{Repo: "solo", Name: "(main)", Path: dir, IsMain: true}},
+		},
+	}}
+	m.groupsLoaded = true
+	m.recomputeActive()
+
+	mm, _ := m.beginCreateFor(m.groups[0].Repo)
+	m = mm.(Model)
+	m.nameInput.SetValue("main")
+	mm, _ = m.handleCreateKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+
+	if m.current == nil || m.current.key != "solo/(main)" || m.current.path != dir {
+		t.Fatalf("typing main should open the checkout, current = %+v", m.current)
+	}
+	if m.mode != modeNormal {
+		t.Fatalf("the form should close, mode = %v", m.mode)
+	}
+	if _, listed := m.activeByKey("solo/(main)"); !listed {
+		t.Fatal("the opened main should be listed on the deck")
 	}
 }

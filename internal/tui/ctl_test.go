@@ -6,8 +6,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/KCaverly/caretaker/internal/agent"
 	"github.com/KCaverly/caretaker/internal/config"
@@ -532,5 +534,92 @@ func TestNewSessionNamedMainOpensTheCheckout(t *testing.T) {
 	}
 	if _, listed := m.activeByKey("solo/(main)"); !listed {
 		t.Fatal("the opened main should be listed on the deck")
+	}
+}
+
+// ghStackModel is ctlModel with a real repo folder holding a gh stack state file
+// in which a is first of two branches.
+func ghStackModel(t *testing.T) (Model, string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := ctlModel(t)
+	m.groups[0].Repo.Path = dir
+	writeGhStack(t, dir, `[{"branch": "a", "pullRequest": {"number": 11}}, {"branch": "x"}]`)
+	return refreshGhStacks(t, m), dir
+}
+
+func writeGhStack(t *testing.T, repoDir, branches string) {
+	t.Helper()
+	state := `{"schemaVersion": 1, "stacks": [{"number": 7, "branches": ` + branches + `}]}`
+	if err := os.WriteFile(filepath.Join(repoDir, ".git", "gh-stack"), []byte(state), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func refreshGhStacks(t *testing.T, m Model) Model {
+	t.Helper()
+	mm, _ := m.Update(m.refreshGhStacksCmd()())
+	return mm.(Model)
+}
+
+func TestCtlListReportsGhStackPosition(t *testing.T) {
+	m, _ := ghStackModel(t)
+	byKey := map[string]ctl.WorktreeInfo{}
+	for _, w := range m.ctlWorktrees() {
+		byKey[w.Key] = w
+	}
+
+	a := byKey["r/a"]
+	if a.Stack != 7 || a.StackIndex != 1 || a.StackTotal != 2 || a.PR != 11 {
+		t.Fatalf("a = %+v", a)
+	}
+	if b := byKey["r/b"]; b.StackTotal != 0 || b.PR != 0 {
+		t.Fatalf("b is not in a stack: %+v", b)
+	}
+}
+
+func TestBarLabelShowsGhStackPosition(t *testing.T) {
+	m, _ := ghStackModel(t)
+	label := func(worktree string) string {
+		m.current = &workspaceRef{repo: "r", worktree: worktree, key: "r/" + worktree}
+		return ansi.Strip(m.barContextLabel())
+	}
+
+	if got := label("a"); !strings.HasSuffix(got, "r / a  1/2 #11") {
+		t.Errorf("a in a stack: %q", got)
+	}
+	if got := label("b"); !strings.HasSuffix(got, "r / b") {
+		t.Errorf("b outside a stack: %q", got)
+	}
+}
+
+func TestGhStackRefreshFollowsTheFile(t *testing.T) {
+	m, dir := ghStackModel(t)
+	state := filepath.Join(dir, ".git", "gh-stack")
+
+	// An unchanged file is not read again.
+	if msg := m.refreshGhStacksCmd()().(ghStacksMsg); len(msg.stacks) != 0 {
+		t.Fatalf("an unchanged file should not be re-read: %+v", msg)
+	}
+
+	writeGhStack(t, dir, `[{"branch": "x"}, {"branch": "a"}, {"branch": "y"}]`)
+	later := time.Now().Add(time.Minute)
+	if err := os.Chtimes(state, later, later); err != nil {
+		t.Fatal(err)
+	}
+	m = refreshGhStacks(t, m)
+	if pos, _ := m.ghStackPosition("r", "a"); pos.Index != 2 || pos.Total != 3 || pos.PR != 0 {
+		t.Fatalf("a after the change = %+v", pos)
+	}
+
+	if err := os.Remove(state); err != nil {
+		t.Fatal(err)
+	}
+	m = refreshGhStacks(t, m)
+	if _, ok := m.ghStackPosition("r", "a"); ok {
+		t.Fatal("a removed file should clear the stack")
 	}
 }

@@ -66,6 +66,14 @@ type WorktreeInfo struct {
 	// Queued counts messages waiting for the active agent to go idle.
 	Queued int `json:"queued,omitempty"`
 
+	// StackTotal is above zero for a branch in a gh stack: it sits at StackIndex
+	// of StackTotal, counted from the bottom. Stack (the number on GitHub) and PR
+	// stay zero until submitted.
+	Stack      int `json:"stack,omitempty"`
+	StackIndex int `json:"stack_index,omitempty"`
+	StackTotal int `json:"stack_total,omitempty"`
+	PR         int `json:"pr,omitempty"`
+
 	Ahead   int    `json:"ahead"`
 	Behind  int    `json:"behind"`
 	Dirty   bool   `json:"dirty"`

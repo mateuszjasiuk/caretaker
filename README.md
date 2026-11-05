@@ -492,6 +492,10 @@ To stack a new session's branch with `gh stack`, spawn it on the top branch, the
 run `gh stack add <branch>` from the top branch's worktree. `gh stack` refuses
 from any other worktree.
 
+For a branch in a `gh stack`, the bar's label shows its position and PR, such as
+`4/5 #1366`, and `ct ctl list` shows `stack=#1369 4/5  pr=#1366`. ct reads this
+from `.git/gh-stack`; it never changes a stack.
+
 ## Stacked PRs
 
 ct treats each commit on a worktree branch as its own GitHub PR, chained bottom-to-top and

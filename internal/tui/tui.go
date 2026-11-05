@@ -27,6 +27,7 @@ import (
 	"github.com/KCaverly/caretaker/internal/config"
 	"github.com/KCaverly/caretaker/internal/ctl"
 	"github.com/KCaverly/caretaker/internal/diffpager"
+	"github.com/KCaverly/caretaker/internal/ghstack"
 	"github.com/KCaverly/caretaker/internal/plasma"
 	"github.com/KCaverly/caretaker/internal/repo"
 	"github.com/KCaverly/caretaker/internal/session"
@@ -435,6 +436,11 @@ type Model struct {
 	// inputs, this grows with a multi-line task description.
 	promptInput textarea.Model
 
+	// ghStacks holds each repo's gh stack positions; ghStackMods the state file
+	// time each was read at, so a poll re-reads only a file that changed.
+	ghStacks    map[string]ghstack.Stacks
+	ghStackMods map[string]time.Time
+
 	// home workspace path/key, cached on first open for pathToKey lookups
 	homeWSPath string
 	homeWSKey  string
@@ -733,6 +739,12 @@ type diffMsg struct {
 	pagerErr error
 }
 
+// ghStacksMsg carries the gh stack state of the repos whose file changed.
+type ghStacksMsg struct {
+	stacks map[string]ghstack.Stacks
+	mods   map[string]time.Time
+}
+
 // statusTickMsg fires on the status-poll timer; statusMsg carries the result of
 // one `claude agents --json` poll.
 type statusTickMsg struct{}
@@ -857,6 +869,50 @@ func (m Model) Init() tea.Cmd {
 		cmds = append(cmds, m.pollUsageCmds(), m.scheduleUsageTick())
 	}
 	return tea.Batch(cmds...)
+}
+
+// refreshGhStacksCmd re-reads the gh stack state of every repo whose file changed
+// since the last read, off the UI goroutine.
+func (m Model) refreshGhStacksCmd() tea.Cmd {
+	paths := make(map[string]string, len(m.groups))
+	for _, g := range m.groups {
+		paths[g.Repo.Name] = g.Repo.Path
+	}
+	seen := maps.Clone(m.ghStackMods)
+
+	return func() tea.Msg {
+		msg := ghStacksMsg{stacks: map[string]ghstack.Stacks{}, mods: map[string]time.Time{}}
+		for name, path := range paths {
+			mod := ghstack.ModTime(path)
+			if mod.Equal(seen[name]) {
+				continue
+			}
+			msg.stacks[name], msg.mods[name] = ghstack.Read(path), mod
+		}
+		return msg
+	}
+}
+
+// applyGhStacks stores the re-read repos' gh stack state.
+func (m Model) applyGhStacks(msg ghStacksMsg) Model {
+	if len(msg.stacks) == 0 {
+		return m
+	}
+
+	stacks, mods := maps.Clone(m.ghStacks), maps.Clone(m.ghStackMods)
+	if stacks == nil {
+		stacks, mods = map[string]ghstack.Stacks{}, map[string]time.Time{}
+	}
+	maps.Copy(stacks, msg.stacks)
+	maps.Copy(mods, msg.mods)
+	m.ghStacks, m.ghStackMods = stacks, mods
+	return m
+}
+
+// ghStackPosition returns where branch sits in its gh stack, if it is in one.
+func (m Model) ghStackPosition(repoName, branch string) (ghstack.Position, bool) {
+	pos, ok := m.ghStacks[repoName][branch]
+	return pos, ok
 }
 
 // pollStatusCmd runs one `claude agents --json` poll off the UI goroutine.
@@ -1313,7 +1369,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Refresh the deck's stack cache for the active worktrees, respecting the
 		// freshness window (the deck's `r` re-kicks with force).
-		return m, tea.Batch(append(m.kickStackFetches(false), restore)...)
+		return m, tea.Batch(append(m.kickStackFetches(false), restore, m.refreshGhStacksCmd())...)
 
 	case creatingTickMsg:
 		// Re-arm only while something is still being set up, so the timer stops on
@@ -1558,7 +1614,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.claudeEnabled() {
 			return m, nil
 		}
-		return m, m.pollStatusCmd()
+		return m, tea.Batch(m.pollStatusCmd(), m.refreshGhStacksCmd())
+
+	case ghStacksMsg:
+		m = m.applyGhStacks(msg)
+		return m, nil
 
 	case statusExpireMsg:
 		// Ignore a tick left over from a flash that a newer one has since

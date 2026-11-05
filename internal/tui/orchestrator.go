@@ -69,6 +69,8 @@ You act on ct through its control command. Run it with Bash:
 
 Add --json to list or summary when you want the raw fields. Worktrees are named repo/name; repo/main is the repo's main checkout, which works with every command except spawn and remove. Agent status is busy, idle, or waiting; "waiting" means the agent stopped for a permission prompt or a question only the user can answer.
 
+A feature split into several sessions gets its own manager, an ordinary session that plans it, starts the other sessions and tracks what blocks what. When the user asks for one, start it with: %[1]s ctl spawn <repo> <name> --prompt "/feature-coordinator <ticket>". You keep the overview across repos; the manager owns the feature's plan.
+
 The repos, each with its main checkout (you can read it) and its plan file:
 
 %[3]s

@@ -73,6 +73,7 @@ func (m Model) handleCtl(p *ctl.Pending) (tea.Model, tea.Cmd) {
 		mm  tea.Model = m
 		cmd tea.Cmd
 	)
+	p.Req.Worktree = m.ctlKey(p.Req.Worktree)
 	switch p.Req.Op {
 	case ctl.OpList:
 		p.Reply(ctl.Response{OK: true, Worktrees: m.ctlWorktrees()})
@@ -98,13 +99,26 @@ func (m Model) handleCtl(p *ctl.Pending) (tea.Model, tea.Cmd) {
 	return mm, tea.Batch(rearm, cmd)
 }
 
-// ctlWorktrees lists every non-main worktree the deck knows, open or not.
+// ctlWorktrees lists every worktree the deck lists, open or not.
 func (m Model) ctlWorktrees() []ctl.WorktreeInfo {
 	out := make([]ctl.WorktreeInfo, 0, len(m.active))
 	for _, it := range m.active {
-		out = append(out, m.ctlInfo(it))
+		info := m.ctlInfo(it)
+		if _, ok := m.mainNamed(it.repo.Name, mainAlias); ok && it.view.WT.IsMain {
+			info.Key = wsKey(it.repo.Name, mainAlias)
+		}
+		out = append(out, info)
 	}
 	return out
+}
+
+// ctlKey turns "<repo>/main" into the main checkout's workspace key.
+func (m Model) ctlKey(key string) string {
+	repoName, name, _ := strings.Cut(key, "/")
+	if it, ok := m.mainNamed(repoName, name); ok {
+		return wsKey(it.repo.Name, it.view.WT.Name)
+	}
+	return key
 }
 
 // ctlInfo describes one worktree: the deck's git columns plus the agents ct
@@ -147,6 +161,10 @@ func (m Model) ctlAgents(key string) (open bool, agents []ctl.AgentInfo) {
 // ctlLookup resolves a "repo/name" key to its deck item.
 func (m Model) ctlLookup(key string) (activeItem, error) {
 	if it, ok := m.activeByKey(key); ok {
+		return it, nil
+	}
+	repoName, _, _ := strings.Cut(key, "/")
+	if it, ok := m.mainItem(repoName); ok && wsKey(it.repo.Name, it.view.WT.Name) == key {
 		return it, nil
 	}
 	if !m.groupsLoaded {
@@ -251,6 +269,10 @@ func (m Model) ctlSpawn(p *ctl.Pending) (tea.Model, tea.Cmd) {
 	}
 	if r == nil {
 		p.Fail(fmt.Errorf("no repo %q (run `ct ctl list`)", req.Repo))
+		return m, nil
+	}
+	if _, ok := m.mainNamed(req.Repo, req.Name); ok {
+		p.Fail(fmt.Errorf("%s/%s is the main checkout; use open or send", req.Repo, req.Name))
 		return m, nil
 	}
 	if err := repo.ValidateWorktreeName(req.Name); err != nil {
@@ -604,6 +626,10 @@ func (m Model) ctlRemove(p *ctl.Pending) (tea.Model, tea.Cmd) {
 	it, err := m.ctlLookup(p.Req.Worktree)
 	if err != nil {
 		p.Fail(err)
+		return m, nil
+	}
+	if it.view.WT.IsMain {
+		p.Fail(fmt.Errorf("%s is the repo's main checkout and can't be removed", p.Req.Worktree))
 		return m, nil
 	}
 	if m.ctlRemoveKey != "" && m.ctlRemoveKey != p.Req.Worktree {

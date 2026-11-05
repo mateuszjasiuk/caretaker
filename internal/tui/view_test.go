@@ -59,8 +59,8 @@ func TestRenderLayout(t *testing.T) {
 			t.Errorf("render missing %q", want)
 		}
 	}
-	if len(m.active) != 3 { // feat-login, bugfix, spike (mains excluded)
-		t.Fatalf("active should hold 3 non-main worktrees, got %d", len(m.active))
+	if len(m.active) != 5 { // each repo's (main), feat-login, bugfix, spike
+		t.Fatalf("active should hold 5 worktrees, got %d", len(m.active))
 	}
 	if testing.Verbose() {
 		m.focus = focusActive
@@ -271,44 +271,44 @@ func TestActiveDetailSegments(t *testing.T) {
 func TestActiveDisplayDetailLine(t *testing.T) {
 	m := sampleModel()
 	innerW := m.width - 4
-	// Give the cursor row (feat-login, active index 0) some work-state so the
+	// Give the cursor row (feat-login, active index 1) some work-state so the
 	// detail line has content.
-	m.active[0].view.HasBase = true
-	m.active[0].view.Ahead = 2
-	m.active[0].view.Subject = "Add login flow"
+	m.active[1].view.HasBase = true
+	m.active[1].view.Ahead = 2
+	m.active[1].view.Subject = "Add login flow"
 
 	// Focus elsewhere: no detail line anywhere.
 	m.focus = focusNew
 	_, rowItem := m.activeDisplay(innerW)
 	base := len(rowItem)
-	// rowItem = [-1 caretaker, 0 feat-login, 1 bugfix, -1 api, 2 spike].
-	if base != 5 {
-		t.Fatalf("unfocused display should have 5 lines, got %d", base)
+	// rowItem = [-1 caretaker, 0 (main), 1 feat-login, 2 bugfix, -1 api, 3 (main), 4 spike].
+	if base != 7 {
+		t.Fatalf("unfocused display should have 7 lines, got %d", base)
 	}
 
 	// Focused on feat-login: exactly one extra line, directly beneath the
 	// cursor row, mapped to -1.
 	m.focus = focusActive
-	m.activeCursor = 0
+	m.activeCursor = 1
 	display, rowItem := m.activeDisplay(innerW)
 	if len(rowItem) != base+1 {
 		t.Fatalf("focused display should add one detail line: got %d, want %d", len(rowItem), base+1)
 	}
-	if rowItem[1] != 0 || rowItem[2] != -1 {
+	if rowItem[2] != 1 || rowItem[3] != -1 {
 		t.Fatalf("detail line should follow the cursor row with rowItem -1, got %v", rowItem)
 	}
-	if !strings.Contains(display[2], "└") || !strings.Contains(display[2], `"Add login flow"`) || strings.Contains(display[2], "ahead") {
-		t.Errorf("detail line content wrong:\n%s", display[2])
+	if !strings.Contains(display[3], "└") || !strings.Contains(display[3], `"Add login flow"`) || strings.Contains(display[3], "ahead") {
+		t.Errorf("detail line content wrong:\n%s", display[3])
 	}
 	// No second detail line anywhere else.
 	for i, ln := range display {
-		if i != 2 && strings.Contains(ln, "└") {
+		if i != 3 && strings.Contains(ln, "└") {
 			t.Errorf("unexpected extra detail line at display index %d:\n%s", i, ln)
 		}
 	}
 
 	// Moving the cursor to a worktree with no state at all drops the line.
-	m.activeCursor = 1 // bugfix: zero work-state
+	m.activeCursor = 2 // bugfix: zero work-state
 	_, rowItem = m.activeDisplay(innerW)
 	if len(rowItem) != base {
 		t.Errorf("cursor on a stateless worktree should add no detail line, got %d lines", len(rowItem))
@@ -480,7 +480,7 @@ func TestRenderCommandPalette(t *testing.T) {
 	m := modelWithAgents(1) // an active workspace, so view-nav rows show
 	mm, _ := m.openPalette()
 	m = mm.(Model)
-	out := m.renderPalette(m.height - barHeight)
+	out := m.renderPalette(40)
 	// The long list windows to the visible height, so assert on rows near the top
 	// plus the title, input placeholder, and footer legend.
 	for _, want := range []string{"COMMANDS", "go to editor", "back to deck", "open agent board", "run", "close"} {

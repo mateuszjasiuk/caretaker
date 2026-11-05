@@ -212,7 +212,7 @@ func StartSpec(spec Spec, dir string, w, h int, dirty func(*Session)) (*Session,
 	installGraphics(s.emu, s.emu.InputPipe())
 	s.installFocus(s.emu)
 
-	go s.pumpOutput()    // pty → emulator (screen)
+	go s.pumpOutput() // pty → emulator (screen)
 	go s.reap()
 	go io.Copy(f, s.emu) //nolint:errcheck // emulator(SendKey) → pty (input)
 

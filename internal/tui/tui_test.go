@@ -360,36 +360,36 @@ func TestDeckClickActiveSection(t *testing.T) {
 func TestDeckClickDetailLineMisses(t *testing.T) {
 	m := sampleModel()
 	m.focus = focusActive
-	m.activeCursor = 0
+	m.activeCursor = 1
 	// Give the cursor row genuine detail context so its detail line renders.
-	m.active[0].view.HasBase = true
-	m.active[0].view.Ahead = 2
-	m.active[0].view.Subject = "Add login flow"
+	m.active[1].view.HasBase = true
+	m.active[1].view.Ahead = 2
+	m.active[1].view.Subject = "Add login flow"
 
 	L := m.deckLayout(m.height - barHeight)
 	display, rowItem := m.activeDisplay(m.width - 4)
 	start, _ := activeWindowStart(rowItem, m.activeCursor, L.activeRows)
-	// display = [caretaker(-1), feat-login(0), └ detail(-1), bugfix(1), api(-1), spike(2)].
-	if len(rowItem) != 6 || rowItem[2] != -1 || !strings.Contains(display[2], "└") {
-		t.Fatalf("expected the detail line at display index 2 with rowItem -1, got %v", rowItem)
+	// display = [caretaker(-1), (main)(0), feat-login(1), └ detail(-1), bugfix(2), api(-1), (main)(3), spike(4)].
+	if len(rowItem) != 8 || rowItem[3] != -1 || !strings.Contains(display[3], "└") {
+		t.Fatalf("expected the detail line at display index 3 with rowItem -1, got %v", rowItem)
 	}
 	yRow := func(di int) int { return barHeight + L.newOuterH + 1 + 2 + (di - start) }
 
 	// A click on the detail line is a miss: unhandled, cursor and focus intact.
-	mm, _, ok := m.deckClick(5, yRow(2))
+	mm, _, ok := m.deckClick(5, yRow(3))
 	m = mm.(Model)
 	if ok {
 		t.Error("clicking the detail line should not be handled")
 	}
-	if m.activeCursor != 0 || m.focus != focusActive || m.current != nil {
+	if m.activeCursor != 1 || m.focus != focusActive || m.current != nil {
 		t.Fatalf("detail-line click must not select or activate: cursor=%d focus=%v current=%+v",
 			m.activeCursor, m.focus, m.current)
 	}
 
 	// The row beneath it (bugfix, shifted down by the detail line) still selects.
-	mm, _, ok = m.deckClick(5, yRow(3))
+	mm, _, ok = m.deckClick(5, yRow(4))
 	m = mm.(Model)
-	if !ok || m.activeCursor != 1 {
+	if !ok || m.activeCursor != 2 {
 		t.Fatalf("click below the detail line should select bugfix: ok=%v cursor=%d", ok, m.activeCursor)
 	}
 }
@@ -3429,7 +3429,7 @@ func contains(xs []int, v int) bool {
 }
 
 func TestDiffXEntersRemoveFlow(t *testing.T) {
-	m := openSampleDiff(t, 0, []repo.FileStat{{Path: "f.go", Add: 1}}, nil,
+	m := openSampleDiff(t, 1, []repo.FileStat{{Path: "f.go", Add: 1}}, nil,
 		"diff --git a/f.go b/f.go\n@@ -1,1 +1,1 @@\n+x\n", "", nil, true)
 	mm, _ := m.handleDiff(diffKey('x'))
 	m = mm.(Model)

@@ -2481,6 +2481,23 @@ func (m Model) paletteCommands() []paletteCmd {
 		})
 	}
 
+	// 1a. Open the main checkout of a repo the deck doesn't list it for.
+	for _, g := range m.groups {
+		it, ok := m.mainItem(g.Repo.Name)
+		if !ok {
+			continue
+		}
+		if _, listed := m.activeByKey(wsKey(g.Repo.Name, it.view.WT.Name)); listed {
+			continue
+		}
+		cmds = append(cmds, paletteCmd{
+			title: "open main of " + g.Repo.Name,
+			run: func(m Model) (tea.Model, tea.Cmd) {
+				return m.openMain(it)
+			},
+		})
+	}
+
 	// 1b. View a worktree's diff — one row per active worktree, right after the
 	// open rows. Running it returns to the deck, moves the active cursor onto
 	// that worktree, and opens the diff, so a later `x` from inside the diff
@@ -4745,6 +4762,12 @@ func (m Model) handleCreateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.status = ""
 			return m, m.filter.Focus()
 		}
+		if it, ok := m.mainNamed(m.pendingRepo.Name, name); ok {
+			m.mode = modeNormal
+			m.nameInput.Blur()
+			m.status = ""
+			return m.openMain(it)
+		}
 		if err := repo.ValidateWorktreeName(name); err != nil {
 			// Reject client-side: keep the form open so the user can fix the
 			// name, and surface the reason inline instead of letting it fail
@@ -5220,6 +5243,22 @@ func (m *Model) clearAgentTracking(pid int) {
 
 func wsKey(repoName, wtName string) string { return repoName + "/" + wtName }
 
+// mainAlias is the name that reaches a repo's main checkout, whose worktree
+// name, "(main)", is awkward to type in a form or a shell.
+const mainAlias = "main"
+
+// mainNamed returns a repo's main checkout when name is mainAlias. A real
+// worktree called "main" keeps that name.
+func (m Model) mainNamed(repoName, name string) (activeItem, bool) {
+	if name != mainAlias {
+		return activeItem{}, false
+	}
+	if _, real := m.worktreePath(wsKey(repoName, name)); real {
+		return activeItem{}, false
+	}
+	return m.mainItem(repoName)
+}
+
 // homeKey is the synthetic workspace key of the home-directory workspace.
 const homeKey = "~/config"
 
@@ -5338,23 +5377,64 @@ func (m *Model) recomputeMatches() {
 func (m *Model) recomputeActive() {
 	var items []activeItem
 	for _, g := range m.groups {
-		var views []WorktreeView
+		var (
+			views []WorktreeView
+			main  *WorktreeView
+		)
 		for _, wv := range g.Worktrees {
-			if wv.WT.IsMain {
-				continue
-			}
 			if m.mgr != nil {
 				wv.Live = m.mgr.Has(wsKey(g.Repo.Name, wv.WT.Name))
+			}
+			if wv.WT.IsMain {
+				main = &wv
+				continue
 			}
 			views = append(views, wv)
 		}
 		m.sortByRecency(g.Repo.Name, views)
+		if main != nil && (len(views) > 0 || m.mainWasUsed(g.Repo.Name, *main)) {
+			views = append([]WorktreeView{*main}, views...)
+		}
 		for _, wv := range views {
 			items = append(items, activeItem{repo: g.Repo, view: wv})
 		}
 	}
 	m.active = items
 	m.activeCursor = clamp(m.activeCursor, 0, max(0, len(items)-1))
+}
+
+// mainWasUsed reports whether a repo's main checkout is open or was opened
+// before. A repo with no other worktree gets a deck row only then, so a folder
+// full of old repos doesn't fill the list.
+func (m *Model) mainWasUsed(repoName string, main WorktreeView) bool {
+	if main.Live {
+		return true
+	}
+	return m.state != nil && m.state.Opened(wsKey(repoName, main.WT.Name)) > 0
+}
+
+// mainItem returns a repo's main checkout, whether or not the deck lists it.
+func (m Model) mainItem(repoName string) (activeItem, bool) {
+	for _, g := range m.groups {
+		if g.Repo.Name != repoName {
+			continue
+		}
+		for _, wv := range g.Worktrees {
+			if wv.WT.IsMain {
+				return activeItem{repo: g.Repo, view: wv}, true
+			}
+		}
+	}
+	return activeItem{}, false
+}
+
+// openMain opens a repo's main checkout and lists it on the deck, which a repo
+// without other worktrees didn't do until now.
+func (m Model) openMain(it activeItem) (tea.Model, tea.Cmd) {
+	mm, cmd := m.activate(it.repo.Name, it.view.WT.Name, it.view.WT.Path)
+	model := mm.(Model)
+	model.recomputeActive()
+	return model, cmd
 }
 
 // mostRecentWorktree returns the worktree opened most recently in ct (across
@@ -5366,9 +5446,6 @@ func (m Model) mostRecentWorktree() (repoName, wtName, path string, ok bool) {
 	var best int64
 	for _, g := range m.groups {
 		for _, wv := range g.Worktrees {
-			if wv.WT.IsMain {
-				continue
-			}
 			if t := m.state.Opened(wsKey(g.Repo.Name, wv.WT.Name)); t > best {
 				best = t
 				repoName, wtName, path, ok = g.Repo.Name, wv.WT.Name, wv.WT.Path, true
@@ -5392,9 +5469,6 @@ func (m *Model) computeRecentRanks() {
 	var ws []wr
 	for _, g := range m.groups {
 		for _, wv := range g.Worktrees {
-			if wv.WT.IsMain {
-				continue
-			}
 			key := wsKey(g.Repo.Name, wv.WT.Name)
 			if t := m.state.Opened(key); t > 0 {
 				ws = append(ws, wr{key, t})

@@ -133,6 +133,9 @@ func (m Model) ctlInfo(it activeItem) ctl.WorktreeInfo {
 	if it.view.HasBase {
 		info.Base, info.Ahead, info.Behind = it.view.BaseBranch, it.view.Ahead, it.view.Behind
 	}
+	if pos, ok := m.ghStackPosition(it.repo.Name, it.view.WT.Branch); ok {
+		info.Stack, info.StackIndex, info.StackTotal, info.PR = pos.Stack, pos.Index, pos.Total, pos.PR
+	}
 	info.Open, info.Agents = m.ctlAgents(key)
 	if m.state != nil {
 		info.Queued = len(m.state.Queue(key))

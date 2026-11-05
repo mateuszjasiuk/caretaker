@@ -301,6 +301,11 @@ func (m Model) barContextLabel() string {
 		return ""
 	}
 	s := dimStyle.Render(m.current.repo + " / " + m.current.worktree)
+	if it, ok := m.activeByKey(m.current.key); ok {
+		if pos, ok := m.ghStackPosition(it.repo.Name, it.view.WT.Branch); ok {
+			s += dimStyle.Render("  " + pos.Label())
+		}
+	}
 	ws := m.current.ws
 	if ws == nil {
 		return s

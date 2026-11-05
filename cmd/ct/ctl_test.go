@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/KCaverly/caretaker/internal/ctl"
@@ -87,5 +88,22 @@ func TestFormatWorktree(t *testing.T) {
 	want := `r/a  open  claude:calm-fox=waiting(permission prompt)  queued=1  ahead=2 behind=0 (main)  dirty(+3/-1 lines)  "Add thing"`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
+func TestFormatWorktreeShowsGhStack(t *testing.T) {
+	got := formatWorktree(ctl.WorktreeInfo{Key: "r/a", Stack: 7, StackIndex: 4, StackTotal: 5, PR: 11})
+	if !strings.Contains(got, "stack=#7 4/5  pr=#11") {
+		t.Errorf("submitted: %q", got)
+	}
+
+	got = formatWorktree(ctl.WorktreeInfo{Key: "r/a", StackIndex: 4, StackTotal: 5})
+	if !strings.Contains(got, "stack=4/5") || strings.Contains(got, "pr=") {
+		t.Errorf("not submitted: %q", got)
+	}
+
+	got = formatWorktree(ctl.WorktreeInfo{Key: "r/a"})
+	if strings.Contains(got, "stack=") {
+		t.Errorf("outside a stack: %q", got)
 	}
 }

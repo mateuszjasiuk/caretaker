@@ -247,6 +247,16 @@ func formatWorktree(wt ctl.WorktreeInfo) string {
 	if wt.Queued > 0 {
 		b.WriteString(fmt.Sprintf("  queued=%d", wt.Queued))
 	}
+	if wt.StackTotal > 0 {
+		b.WriteString("  stack=")
+		if wt.Stack > 0 {
+			b.WriteString(fmt.Sprintf("#%d ", wt.Stack))
+		}
+		b.WriteString(fmt.Sprintf("%d/%d", wt.StackIndex, wt.StackTotal))
+	}
+	if wt.PR > 0 {
+		b.WriteString(fmt.Sprintf("  pr=#%d", wt.PR))
+	}
 	if wt.Base != "" {
 		b.WriteString(fmt.Sprintf("  ahead=%d behind=%d (%s)", wt.Ahead, wt.Behind, wt.Base))
 	}

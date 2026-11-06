@@ -28,6 +28,9 @@ type State struct {
 	// StacksExpanded is true when the bar's agent strip shows every gh stack in
 	// full instead of collapsing the ones you're not in.
 	StacksExpanded bool `json:"stacks_expanded,omitempty"`
+	// Features maps "repo/name" to a feature: its manager and the worktrees
+	// that build it.
+	Features map[string]*Feature `json:"features,omitempty"`
 
 	// Snapshot/Write bookkeeping: seq numbers snapshots as they're taken,
 	// written tracks the newest one flushed, and writeMu serialises flushes so

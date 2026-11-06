@@ -15,9 +15,9 @@ const ctlUsage = `usage: ct ctl <command> [flags]
 
 Talk to the running ct. Worktrees are named "repo/name".
 
-  list [--json]                         every worktree, with open agents and status
+  list [--json] [--feature REPO/NAME]   every worktree (or one feature's), with open agents and status
   summary <repo/name> [--json] [-n N]   commits, diffstat, queue, and the agent's last message
-  spawn <repo> <name> [--base REF] [--provider claude|codex] [--prompt TEXT | -]
+  spawn <repo> <name> [--base REF] [--provider claude|codex] [--feature NAME] [--prompt TEXT | -]
                                         create a worktree and start an agent on the prompt
   send <repo/name> [TEXT | -]           message the worktree's agent (queued until it is idle)
   interrupt <repo/name>                 press Escape in the worktree's agent
@@ -25,6 +25,13 @@ Talk to the running ct. Worktrees are named "repo/name".
   open <repo/name>                      start a closed worktree's sessions, resuming its agents
   reopen <repo/name> [--force]          stop and open again (restarts its agents on the same conversations)
   remove <repo/name>                    ask the user to confirm removing the worktree
+
+  feature new <repo> <name> --manager <repo/name> [--notes PATH]
+                                        start a feature, led by the manager's session
+  feature add <repo/feature> <repo/name>
+                                        add an existing worktree to a feature
+  feature list [--json]                 every feature, with its manager, worktrees and stacks
+  feature drop <repo/feature>           forget a feature (its worktrees stay)
 
 "-" reads the text from stdin. Set CT_SOCKET to choose between several running ct instances.`
 
@@ -88,6 +95,18 @@ func parseCtlArgs(args []string) (req ctl.Request, asJSON bool, err error) {
 			}
 		case "--provider":
 			if req.Provider, err = next(a); err != nil {
+				return req, false, err
+			}
+		case "--feature":
+			if req.Feature, err = next(a); err != nil {
+				return req, false, err
+			}
+		case "--manager":
+			if req.Manager, err = next(a); err != nil {
+				return req, false, err
+			}
+		case "--notes":
+			if req.Notes, err = next(a); err != nil {
 				return req, false, err
 			}
 		case "--prompt":
@@ -167,13 +186,54 @@ func parseCtlArgs(args []string) (req ctl.Request, asJSON bool, err error) {
 			return req, false, fmt.Errorf("%s takes one worktree", cmd)
 		}
 		req.Worktree = positional[0]
+	case "feature":
+		if err := parseFeatureArgs(&req, positional); err != nil {
+			return req, false, err
+		}
 	default:
 		return req, false, fmt.Errorf("unknown command %q", cmd)
+	}
+	if req.Feature != "" && req.Op != ctl.OpSpawn && !strings.Contains(req.Feature, "/") {
+		return req, false, fmt.Errorf("feature %q should be written as repo/name", req.Feature)
 	}
 	if req.Worktree != "" && !strings.Contains(req.Worktree, "/") {
 		return req, false, fmt.Errorf("worktree %q should be written as repo/name", req.Worktree)
 	}
 	return req, asJSON, nil
+}
+
+// parseFeatureArgs fills req for `ct ctl feature <sub> …`.
+func parseFeatureArgs(req *ctl.Request, positional []string) error {
+	if len(positional) == 0 {
+		return fmt.Errorf("feature takes new, add, list or drop")
+	}
+	sub, args := positional[0], positional[1:]
+
+	switch sub {
+	case "new":
+		req.Op = ctl.OpFeatureNew
+		if len(args) != 2 || req.Manager == "" {
+			return fmt.Errorf("feature new takes a repo, a name and --manager <repo/name>")
+		}
+		req.Feature = args[0] + "/" + args[1]
+	case "add":
+		req.Op = ctl.OpFeatureAdd
+		if len(args) != 2 {
+			return fmt.Errorf("feature add takes a feature and a worktree")
+		}
+		req.Feature, req.Worktree = args[0], args[1]
+	case "list":
+		req.Op = ctl.OpFeatureList
+	case "drop":
+		req.Op = ctl.OpFeatureDrop
+		if len(args) != 1 {
+			return fmt.Errorf("feature drop takes one feature")
+		}
+		req.Feature = args[0]
+	default:
+		return fmt.Errorf("unknown feature command %q (new, add, list or drop)", sub)
+	}
+	return nil
 }
 
 // printCtl renders a response for people (and for an agent reading a terminal):
@@ -187,6 +247,14 @@ func printCtl(req ctl.Request, resp ctl.Response) {
 		}
 		for _, wt := range resp.Worktrees {
 			fmt.Println(formatWorktree(wt))
+		}
+	case ctl.OpFeatureList:
+		if len(resp.Features) == 0 {
+			fmt.Println("no features")
+			return
+		}
+		for _, f := range resp.Features {
+			fmt.Println(formatFeature(f))
 		}
 	case ctl.OpSummary:
 		s := resp.Summary
@@ -230,6 +298,13 @@ func formatWorktree(wt ctl.WorktreeInfo) string {
 	if wt.Branch != "" && wt.Branch != wt.Name {
 		b.WriteString("  branch=" + wt.Branch)
 	}
+	if wt.Feature != "" {
+		_, name, _ := strings.Cut(wt.Feature, "/")
+		b.WriteString("  feature=" + name)
+		if wt.Manager {
+			b.WriteString(" manager")
+		}
+	}
 	if wt.Open {
 		b.WriteString("  open")
 	} else {
@@ -265,6 +340,26 @@ func formatWorktree(wt ctl.WorktreeInfo) string {
 	}
 	if wt.Subject != "" {
 		b.WriteString("  " + strconv.Quote(wt.Subject))
+	}
+	return b.String()
+}
+
+func formatFeature(f ctl.FeatureInfo) string {
+	var b strings.Builder
+	b.WriteString(f.Key)
+	if f.Manager == "" {
+		b.WriteString("  manager=(gone)")
+	} else {
+		b.WriteString("  manager=" + f.Manager)
+	}
+	if len(f.Worktrees) > 0 {
+		b.WriteString("  worktrees=" + strings.Join(f.Worktrees, ","))
+	}
+	if len(f.Stacks) > 0 {
+		b.WriteString("  stacks=" + strings.Join(f.Stacks, ","))
+	}
+	if f.Notes != "" {
+		b.WriteString("  notes=" + f.Notes)
 	}
 	return b.String()
 }

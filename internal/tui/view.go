@@ -129,6 +129,8 @@ func (m Model) View() tea.View {
 		body = m.renderDiff(h - barHeight)
 	case m.stackOpen:
 		body = m.renderStack(h - barHeight)
+	case m.ghPopup != nil:
+		body = m.renderGhStackPopup(h - barHeight)
 	case m.screen == screenPicker:
 		body = m.renderDeck(h - barHeight)
 	case m.screen == screenTerminal && m.current != nil && m.current.ws != nil:
@@ -1420,6 +1422,7 @@ func (m Model) activeDisplay(innerW int) (lines []string, rowItem []int) {
 		}
 	}
 
+	lastStack := ""
 	for i, it := range m.active {
 		if it.repo.Name != lastRepo {
 			// The previous repo's pending rows close out its group before the next
@@ -1428,7 +1431,14 @@ func (m Model) activeDisplay(innerW int) (lines []string, rowItem []int) {
 			lines = append(lines, repoHdrStyle.Render(it.repo.Name))
 			rowItem = append(rowItem, -1)
 			lastRepo = it.repo.Name
+			lastStack = ""
 		}
+		pos, inStack := m.ghStackPosition(it.repo.Name, it.view.WT.Branch)
+		if inStack && pos.Bottom != lastStack {
+			lines = append(lines, strings.Repeat(" ", activeRowPrefixW)+dimStyle.Render(ghStackIcon+" "+pos.Name()))
+			rowItem = append(rowItem, -1)
+		}
+		lastStack = pos.Bottom
 		selected := i == m.activeCursor && m.focus == focusActive
 		lines = append(lines, m.activeRow(it, selected, innerW))
 		rowItem = append(rowItem, i)
@@ -1569,13 +1579,20 @@ func (m Model) activeRow(it activeItem, highlight bool, innerW int) string {
 		cluster = cluster + " " + gl
 		clusterW += 1 + glW
 	}
+	indent := ""
+	if pos, ok := m.ghStackPosition(it.repo.Name, it.view.WT.Branch); ok {
+		indent = "  "
+		label := pos.Label()
+		cluster = dimStyle.Render(label) + " " + cluster
+		clusterW += lipgloss.Width(label) + 1
+	}
 	// On the focused row, identity outranks optional right-side facts. Drop the
 	// cluster before truncating the selected worktree name.
-	if highlight && lipgloss.Width(it.view.WT.Name) > innerW-activeRowPrefixW-clusterW-1 {
+	if highlight && lipgloss.Width(indent+it.view.WT.Name) > innerW-activeRowPrefixW-clusterW-1 {
 		cluster, clusterW = "", 0
 	}
-	nameMax := max(1, innerW-activeRowPrefixW-clusterW-1)
-	name := truncateTo(it.view.WT.Name, nameMax)
+	nameMax := max(1, innerW-activeRowPrefixW-len(indent)-clusterW-1)
+	name := indent + truncateTo(it.view.WT.Name, nameMax)
 	gap := max(1, innerW-activeRowPrefixW-lipgloss.Width(name)-clusterW)
 
 	if highlight {
@@ -1817,6 +1834,8 @@ func (m Model) renderHelp(h int) string {
 		row(m.keys.Highlight, "highlight this worktree in the bar (toggle)"),
 		row(m.keys.PrevAgent+" / "+m.keys.NextAgent, "prev / next agent"),
 		row(m.keys.PrevWorktree+" / "+m.keys.NextWorktree, "prev / next worktree"),
+		row(m.keys.ToggleStacks, "collapse or expand stacks in the bar"),
+		row(m.keys.StackPopup, "the stack's PRs, reviews and checks"),
 	)
 	if m.usageEnabled() {
 		rows = append(rows, row(m.keys.Usage, "usage limits"))
@@ -2340,14 +2359,15 @@ var stripSep = "   " + barSep.Render("│") + "  "
 // icons and the right-side facts: each open worktree's name, coloured by its
 // agents (yellow working, green ✓ done, red ! waiting, white seen but not
 // answered or highlighted, dim idle), with the current worktree underlined. With more than
-// one repo open, each repo's worktrees follow its name. Repo names go first
+// one repo open, each repo's worktrees follow its name. A gh stack you're not in
+// shows as one item, and the stack you're in follows its name. Repo names go first
 // when space is short, then names shorten, then items are dropped and show as
 // "+N". Returns "" when the strip is off or doesn't fit.
 func (m Model) agentStripLayout() (string, []stripItem) {
 	if !m.agentStrip {
 		return "", nil
 	}
-	groups := m.stripGroups()
+	groups := m.stripEntries()
 	if len(groups) == 0 {
 		return "", nil
 	}
@@ -2374,6 +2394,10 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 		switch {
 		case g.key == m.homeWSKey:
 			return "~"
+		case g.members != nil && count[g.worktree] > 1 && !withRepo:
+			return ghStackIcon + " " + g.repo + "/" + g.worktree
+		case g.members != nil:
+			return ghStackIcon + " " + g.worktree
 		case count[g.worktree] > 1 && !withRepo:
 			return g.repo + "/" + g.worktree
 		}
@@ -2414,6 +2438,9 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 		}
 		if withRepo && newRepo && g.key != m.homeWSKey {
 			s += onAccount(barSep, g.account != "").Render(truncateTo(g.repo, 16) + ": ")
+		}
+		if g.stack.Index > 0 && g.members == nil && (i == 0 || !sameGhStack(groups[i-1], g)) {
+			s += onAccount(barSep, g.account != "").Render(ghStackIcon + " " + truncateTo(g.stack.Name(), 16) + ": ")
 		}
 		return s
 	}
@@ -2491,8 +2518,13 @@ func (m Model) stripClick(x, y int) (tea.Model, tea.Cmd, bool) {
 }
 
 // openStripGroup opens a worktree from the agent strip. A worktree with an agent
-// that needs attention opens that agent; any other opens the worktree.
+// that needs attention opens that agent; any other opens the worktree. A collapsed
+// gh stack opens the worktree used last in it.
 func (m Model) openStripGroup(g agentGroup) (tea.Model, tea.Cmd) {
+	if g.members != nil {
+		g = lastUsedGroup(g.members)
+	}
+
 	for _, a := range g.agents {
 		if a.attn != attnNone && a.attn == g.attn {
 			return m.focusBoardAgent(a)

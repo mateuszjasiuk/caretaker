@@ -28,6 +28,18 @@ type Position struct {
 	Total int
 	// PR is the branch's pull request number, 0 until it has one.
 	PR int
+	// Bottom is the stack's first branch. It tells stacks apart before they have
+	// a number.
+	Bottom string
+}
+
+// Name is how the stack is shown: "#1369", or its first branch before it has
+// been submitted.
+func (p Position) Name() string {
+	if p.Stack == 0 {
+		return p.Bottom
+	}
+	return fmt.Sprintf("#%d", p.Stack)
 }
 
 // Label is the position as the bar shows it: "4/5 #1366", or "4/5" without a PR.
@@ -92,7 +104,7 @@ func parse(data []byte) (Stacks, error) {
 	stacks := Stacks{}
 	for _, s := range file.Stacks {
 		for i, b := range s.Branches {
-			pos := Position{Stack: s.Number, Index: i + 1, Total: len(s.Branches)}
+			pos := Position{Stack: s.Number, Index: i + 1, Total: len(s.Branches), Bottom: s.Branches[0].Branch}
 			if b.PullRequest != nil {
 				pos.PR = b.PullRequest.Number
 			}

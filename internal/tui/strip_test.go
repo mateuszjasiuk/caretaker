@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/KCaverly/caretaker/internal/config"
+	"github.com/KCaverly/caretaker/internal/ghstack"
 	"github.com/KCaverly/caretaker/internal/repo"
 	"github.com/KCaverly/caretaker/internal/session"
 )
@@ -271,5 +272,126 @@ func TestAgentStripGroupsByClaudeAccount(t *testing.T) {
 	}
 	if before := ansi.Strip(raw[:at]); strings.Contains(before, "alpha") || !strings.Contains(before, "beta") {
 		t.Fatalf("the background should start at the private block, before it: %q", before)
+	}
+}
+
+// stackStripModel is stripModel with branches a, b, c and d in one gh stack, in
+// that order, and "beta" and "zed" outside it. "beta" is current.
+func stackStripModel(t *testing.T) Model {
+	t.Helper()
+	m := stripModel(t, 140, "d", "a", "c", "b", "zed", "beta")
+	m.stacksExpanded = false
+	for i := range m.active {
+		m.active[i].view.WT.Branch = m.active[i].view.WT.Name
+	}
+	stack := ghstack.Stacks{}
+	for i, name := range []string{"a", "b", "c", "d"} {
+		stack[name] = ghstack.Position{Stack: 4, Index: i + 1, Total: 4, Bottom: "a"}
+	}
+	m.ghStacks = map[string]ghstack.Stacks{"repo": stack}
+	return m
+}
+
+func TestStripCollapsesStackYouAreNotIn(t *testing.T) {
+	m := stackStripModel(t)
+	if row, want := barFirstRow(m), "⛁ #4 · beta · zed"; !strings.Contains(row, want) {
+		t.Fatalf("want %q in %q", want, row)
+	}
+}
+
+func TestStripExpandsTheCurrentStackInStackOrder(t *testing.T) {
+	m := stackStripModel(t)
+	mm, _ := m.activate("repo", "c", m.active[2].view.WT.Path)
+	m = mm.(Model)
+	if row, want := barFirstRow(m), "⛁ #4: a · b · c · d · beta · zed"; !strings.Contains(row, want) {
+		t.Fatalf("want %q in %q", want, row)
+	}
+}
+
+func TestStripCollapsedStackShowsMostUrgentState(t *testing.T) {
+	m := stackStripModel(t)
+	ws, _ := m.mgr.Workspace("repo/b")
+	if len(ws.Agents) == 0 {
+		t.Skip("workspace started without an agent")
+	}
+	m.agentStatus = map[int]AgentStatus{ws.Agents[0].Pid(): {Status: "waiting"}}
+	if row := barFirstRow(m); !strings.Contains(row, "! ⛁ #4") {
+		t.Fatalf("a waiting worktree should mark its collapsed stack: %q", row)
+	}
+}
+
+func TestStripUnsubmittedStackUsesFirstBranch(t *testing.T) {
+	m := stackStripModel(t)
+	stack := m.ghStacks["repo"]
+	for name, pos := range stack {
+		pos.Stack = 0
+		stack[name] = pos
+	}
+	if row := barFirstRow(m); !strings.Contains(row, "⛁ a ·") {
+		t.Fatalf("an unsubmitted stack should show its first branch: %q", row)
+	}
+}
+
+func TestStripStackWithOneOpenWorktreeIsPlain(t *testing.T) {
+	m := stripModel(t, 140, "a", "beta")
+	m.stacksExpanded = false
+	m.active[0].view.WT.Branch = "a"
+	m.ghStacks = map[string]ghstack.Stacks{"repo": {"a": {Stack: 4, Index: 1, Total: 2, Bottom: "a"}}}
+	if row := barFirstRow(m); strings.Contains(row, "⛁") || !strings.Contains(row, "a · beta") {
+		t.Fatalf("one open worktree needs no stack: %q", row)
+	}
+}
+
+func TestToggleStacksShowsEveryStackAndIsSaved(t *testing.T) {
+	m := stackStripModel(t)
+	m = pressCtrl(t, m, 'y')
+	if row, want := barFirstRow(m), "⛁ #4: a · b · c · d · beta · zed"; !strings.Contains(row, want) {
+		t.Fatalf("want %q in %q", want, row)
+	}
+	if !m.state.StacksExpanded {
+		t.Fatal("the choice should be kept in the state")
+	}
+
+	m = pressCtrl(t, m, 'y')
+	if row := barFirstRow(m); !strings.Contains(row, "⛁ #4 · beta") {
+		t.Fatalf("a second press should collapse again: %q", row)
+	}
+}
+
+func TestWorktreeKeysTreatCollapsedStackAsOneStop(t *testing.T) {
+	m := stackStripModel(t) // beta is current
+	for _, name := range []string{"a", "b", "c", "d"} {
+		m.state.LastOpened["repo/"+name] = 100
+	}
+	m.state.LastOpened["repo/c"] = 200
+
+	want := []string{
+		"zed",  // next after beta
+		"c",    // wraps onto the collapsed stack: the worktree used last
+		"d",    // now inside, so it goes through the stack
+		"beta", // and out
+	}
+	for i, name := range want {
+		m = pressCtrl(t, m, 'l')
+		if m.current == nil || m.current.worktree != name {
+			t.Fatalf("press %d: current = %v, want %s", i, m.current, name)
+		}
+		// Opening touches the state with the real time; keep c the last used.
+		m.state.LastOpened["repo/c"] = 1 << 40
+	}
+}
+
+func TestClickOnCollapsedStackOpensLastUsed(t *testing.T) {
+	m := stackStripModel(t)
+	for _, name := range []string{"a", "b", "c", "d"} {
+		m.state.LastOpened["repo/"+name] = 100
+	}
+	m.state.LastOpened["repo/b"] = 200
+
+	_, items := m.agentStripLayout()
+	mm, _ := m.handleMouseClick(tea.MouseClickMsg{X: items[0].start, Y: 0, Button: tea.MouseLeft})
+	m = mm.(Model)
+	if m.current == nil || m.current.worktree != "b" {
+		t.Fatalf("clicking the stack should open b, current = %v", m.current)
 	}
 }

@@ -37,10 +37,10 @@ const realShape = `{
 func TestReadPositions(t *testing.T) {
 	stacks := Read(writeState(t, realShape))
 
-	if got := stacks["a"]; got != (Position{Stack: 1369, Index: 1, Total: 2, PR: 1171}) {
+	if got := stacks["a"]; got != (Position{Stack: 1369, Index: 1, Total: 2, PR: 1171, Bottom: "a"}) {
 		t.Errorf("a = %+v", got)
 	}
-	if got := stacks["b"]; got != (Position{Stack: 1369, Index: 2, Total: 2}) {
+	if got := stacks["b"]; got != (Position{Stack: 1369, Index: 2, Total: 2, Bottom: "a"}) {
 		t.Errorf("b = %+v", got)
 	}
 	if _, ok := stacks["main"]; ok {

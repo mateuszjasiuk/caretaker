@@ -395,3 +395,32 @@ func TestClickOnCollapsedStackOpensLastUsed(t *testing.T) {
 		t.Fatalf("clicking the stack should open b, current = %v", m.current)
 	}
 }
+
+// TestStripStackSitsOnItsOwnBackground checks that the stack's tint covers the
+// stack from its name to its last worktree, and stops before the next one.
+func TestStripStackSitsOnItsOwnBackground(t *testing.T) {
+	m := stackStripModel(t)
+	mm, _ := m.activate("repo", "c", m.active[2].view.WT.Path)
+	m = mm.(Model)
+
+	raw := strings.SplitN(m.renderBar(), "\n", 2)[0]
+	tint := "48;2;31;58;54" // cStackBg as a truecolor background
+	first, last := strings.Index(raw, tint), strings.LastIndex(raw, tint)
+	if first < 0 {
+		t.Fatalf("no stack background in %q", raw)
+	}
+	if before := ansi.Strip(raw[:first]); strings.Contains(before, "⛁") {
+		t.Fatalf("the background should start at the stack's name, before it: %q", before)
+	}
+	tinted := ansi.Strip(raw[first:last])
+	if !strings.Contains(tinted, "a · b · c") || strings.Contains(tinted, "beta") {
+		t.Fatalf("the background should cover a to d and stop before beta: %q", tinted)
+	}
+
+	m = pressCtrl(t, m, 'l')
+	m = pressCtrl(t, m, 'l') // to beta, so the stack collapses
+	raw = strings.SplitN(m.renderBar(), "\n", 2)[0]
+	if at := strings.Index(raw, tint); at < 0 || !strings.Contains(ansi.Strip(raw[at:]), "⛁ #4") {
+		t.Fatalf("a collapsed stack keeps its background: %q", raw)
+	}
+}

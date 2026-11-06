@@ -33,7 +33,10 @@ var (
 	// cAccountBg sits behind the agent strip's worktrees of an extra Claude
 	// account: quieter than a selection, but enough to read them as a block.
 	cAccountBg = lipgloss.Color("#3A2840") // dark purple
-	cInk       = lipgloss.Color("#1D2021") // bg0_h (hard)
+	// cStackBg sits behind a gh stack in the agent strip, so you can see where
+	// it ends. It wins over cAccountBg inside an extra account's block.
+	cStackBg = lipgloss.Color("#1F3A36") // dark aqua
+	cInk     = lipgloss.Color("#1D2021") // bg0_h (hard)
 )
 
 var (
@@ -2419,20 +2422,24 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 		if m.current != nil && g.key == m.current.key {
 			st = st.Foreground(cAccent).Underline(true)
 		}
-		return onAccount(st, g.account != "").Render(name)
+		return stripBg(st, g).Render(name)
 	}
 	// lead is what goes before item i: a separator, and the repo's name when
-	// item i starts a new repo. An extra account's block keeps its background
-	// between its items; the separator before the block stays outside it.
+	// item i starts a new repo. A gh stack's or an extra account's block keeps
+	// its background between its items; the separator before the block stays
+	// outside it.
 	lead := func(i int, withRepo bool) string {
 		g := groups[i]
 		newRepo := i == 0 || groups[i-1].repo != g.repo
 		inBlock := g.account != "" && i > 0 && groups[i-1].account == g.account
+		inStack := i > 0 && sameGhStack(groups[i-1], g)
 		var s string
 		switch {
 		case i == 0:
 		case withRepo && newRepo:
 			s = onAccount(barSep, inBlock).Render(" │ ")
+		case inStack:
+			s = dimStyle.Background(cStackBg).Render(" · ")
 		default:
 			s = onAccount(dimStyle, inBlock).Render(" · ")
 		}
@@ -2440,7 +2447,7 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 			s += onAccount(barSep, g.account != "").Render(truncateTo(g.repo, 16) + ": ")
 		}
 		if g.stack.Index > 0 && g.members == nil && (i == 0 || !sameGhStack(groups[i-1], g)) {
-			s += onAccount(barSep, g.account != "").Render(ghStackIcon + " " + truncateTo(g.stack.Name(), 16) + ": ")
+			s += barSep.Background(cStackBg).Render(ghStackIcon + " " + truncateTo(g.stack.Name(), 16) + ": ")
 		}
 		return s
 	}
@@ -2534,6 +2541,15 @@ func (m Model) openStripGroup(g agentGroup) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m.activate(g.repo, g.worktree, g.path)
+}
+
+// stripBg puts a strip item on its block's background: its gh stack's, else its
+// extra account's, else none.
+func stripBg(st lipgloss.Style, g agentGroup) lipgloss.Style {
+	if g.stack.Index > 0 {
+		return st.Background(cStackBg)
+	}
+	return onAccount(st, g.account != "")
 }
 
 // onAccount puts st on the extra-account background when on is true.

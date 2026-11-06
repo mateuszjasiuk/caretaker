@@ -311,6 +311,10 @@ type Model struct {
 	agentStrip bool // list open worktrees after the bar icons
 	// stacksExpanded shows every gh stack in full in the agent strip.
 	stacksExpanded bool
+	// ghPopup is the open gh stack popup, nil when closed.
+	ghPopup *ghStackPopup
+	// ghPRs is what GitHub last said about each stack's PRs, by stack.
+	ghPRs map[string]ghPRFetch
 
 	screen     screen
 	current    *workspaceRef
@@ -1285,7 +1289,7 @@ func runFocusCommand(argv []string, dir string) {
 // over the picker screen) and the terminal is wide enough for the split.
 func (m Model) plasmaShown() bool {
 	return m.screen == screenPicker && !m.helpOpen && !m.boardOpen && !m.usageOpen &&
-		!m.paletteOpen && !m.diffOpen && !m.stackOpen && m.plasmaWidth() > 0
+		!m.paletteOpen && !m.diffOpen && !m.stackOpen && m.ghPopup == nil && m.plasmaWidth() > 0
 }
 
 // syncVisible pushes the currently visible session set to the manager.
@@ -1305,7 +1309,7 @@ func (m Model) visibleSessions() []*session.Session {
 	// m.diffOpen is redundant today (the diff only opens over the picker, which
 	// already returns nil), but it is listed so a future entry point that opens
 	// the diff over a session can't leak that session's output onto the screen.
-	if m.helpOpen || m.boardOpen || m.usageOpen || m.paletteOpen || m.diffOpen || m.stackOpen || m.screen == screenPicker || m.screen == screenSetup {
+	if m.helpOpen || m.boardOpen || m.usageOpen || m.paletteOpen || m.diffOpen || m.stackOpen || m.ghPopup != nil || m.screen == screenPicker || m.screen == screenSetup {
 		return nil
 	}
 	if m.screen == screenOrchestrator {
@@ -1333,7 +1337,7 @@ func (m Model) visibleSessions() []*session.Session {
 }
 
 func (m Model) overlayOpen() bool {
-	return m.helpOpen || m.boardOpen || m.usageOpen || m.paletteOpen || m.diffOpen || m.stackOpen
+	return m.helpOpen || m.boardOpen || m.usageOpen || m.paletteOpen || m.diffOpen || m.stackOpen || m.ghPopup != nil
 }
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1634,6 +1638,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.applyGhStacks(msg)
 		return m, nil
 
+	case ghPRsMsg:
+		m = m.applyGhPRs(msg)
+		return m, nil
+
 	case statusExpireMsg:
 		// Ignore a tick left over from a flash that a newer one has since
 		// replaced (statusAt moved); otherwise the fresh flash would be cleared
@@ -1887,7 +1895,7 @@ func (m Model) routeToFocusedInputs(msg tea.Msg) (Model, tea.Cmd) {
 //     bracketed-paste mode.
 func (m Model) handlePaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	onSession := m.screen != screenPicker && m.screen != screenSetup &&
-		!m.helpOpen && !m.boardOpen && !m.usageOpen && !m.paletteOpen && !m.diffOpen && !m.stackOpen &&
+		!m.helpOpen && !m.boardOpen && !m.usageOpen && !m.paletteOpen && !m.diffOpen && !m.stackOpen && m.ghPopup == nil &&
 		!m.confirmActive()
 	if onSession {
 		if s := m.activeSession(); s != nil {
@@ -1896,9 +1904,10 @@ func (m Model) handlePaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	// The diff and stack overlays have no input field, so a paste is swallowed
-	// rather than routed to the deck filter (which stays focused across screens).
-	if m.diffOpen || m.stackOpen {
+	// The diff and stack overlays and the gh stack popup have no input field, so a
+	// paste is swallowed rather than routed to the deck filter (which stays focused
+	// across screens).
+	if m.diffOpen || m.stackOpen || m.ghPopup != nil {
 		return m, nil
 	}
 	// The palette owns its input exclusively while open. Routing by focus here
@@ -2511,6 +2520,7 @@ func (m Model) jumpAttention() (tea.Model, tea.Cmd) {
 	m.helpOpen = false
 	m.usageOpen = false
 	m.diffOpen = false
+	m.ghPopup = nil
 	mm, cmd := m.focusBoardAgent(candidates[target])
 	model := mm.(Model)
 	if origin != nil {
@@ -2761,6 +2771,7 @@ func (m Model) paletteCommands() []paletteCmd {
 			paletteCmd{title: "previous worktree", hint: m.keys.PrevWorktree, run: func(m Model) (tea.Model, tea.Cmd) { return m.rotateWorktree(-1) }},
 		)
 	}
+	cmds = append(cmds, paletteCmd{title: "show the stack's PRs and reviews", hint: m.keys.StackPopup, run: func(m Model) (tea.Model, tea.Cmd) { return m.openGhStackPopup() }})
 	cmds = append(cmds, paletteCmd{title: "collapse or expand stacks in the bar", hint: m.keys.ToggleStacks, run: func(m Model) (tea.Model, tea.Cmd) { return m.toggleStacks() }})
 	cmds = append(cmds, paletteCmd{title: "open home workspace", hint: m.keys.GlobalConfig, run: func(m Model) (tea.Model, tea.Cmd) { return m.activateGlobalConfig() }})
 	cmds = append(cmds, paletteCmd{title: "open orchestrator", hint: m.keys.Orchestrator, run: func(m Model) (tea.Model, tea.Cmd) { return m.openOrchestrator() }})
@@ -3576,6 +3587,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.stackOpen {
 		return m.handleStack(msg)
 	}
+	if m.ghPopup != nil {
+		return m.handleGhStackPopup(msg)
+	}
 	// The usage overlay is modal like the board, but read-only: it only closes
 	// on esc or its own key, and swallows everything else so no keystroke
 	// leaks into the session underneath.
@@ -3621,6 +3635,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.rotateWorktree(-1)
 		case m.keys.ToggleStacks:
 			return m.toggleStacks()
+		case m.keys.StackPopup:
+			return m.openGhStackPopup()
 		}
 	}
 	// Direct-jump keys work from session screens and from the picker whenever a
@@ -3679,7 +3695,7 @@ func (m Model) returnToPrevious() (tea.Model, tea.Cmd) {
 	target := *m.returnLocation
 	from := m.currentReturnLocation()
 	m.helpOpen, m.boardOpen, m.usageOpen, m.paletteOpen = false, false, false, false
-	m.diffOpen, m.stackOpen = false, false
+	m.diffOpen, m.stackOpen, m.ghPopup = false, false, nil
 
 	if target.screen == screenPicker {
 		m.screen = screenPicker
@@ -3744,7 +3760,7 @@ func (m Model) isReservedActionKey(s string) bool {
 	switch s {
 	case m.keys.Cycle, m.keys.CycleBack, m.keys.Picker, m.keys.Palette,
 		m.keys.Attention, m.keys.Highlight, m.keys.GlobalConfig, m.keys.Orchestrator, m.keys.NextAgent, m.keys.PrevAgent,
-		m.keys.NextWorktree, m.keys.PrevWorktree, m.keys.ToggleStacks,
+		m.keys.NextWorktree, m.keys.PrevWorktree, m.keys.ToggleStacks, m.keys.StackPopup,
 		m.keys.CommandPalette, m.keys.GotoEditor, m.keys.GotoAgent, m.keys.GotoTerm:
 		return true
 	}
@@ -4108,7 +4124,7 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		if mm, cmd, ok := m.stripClick(mo.X, mo.Y); ok {
 			return mm, cmd
 		}
-		if m.screen == screenPicker && !m.helpOpen && !m.paletteOpen && !m.diffOpen && !m.stackOpen {
+		if m.screen == screenPicker && !m.helpOpen && !m.paletteOpen && !m.diffOpen && !m.stackOpen && m.ghPopup == nil {
 			if mm, cmd, ok := m.deckClick(mo.X, mo.Y); ok {
 				return mm, cmd
 			}

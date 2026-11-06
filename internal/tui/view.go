@@ -129,6 +129,8 @@ func (m Model) View() tea.View {
 		body = m.renderDiff(h - barHeight)
 	case m.stackOpen:
 		body = m.renderStack(h - barHeight)
+	case m.ghPopup != nil:
+		body = m.renderGhStackPopup(h - barHeight)
 	case m.screen == screenPicker:
 		body = m.renderDeck(h - barHeight)
 	case m.screen == screenTerminal && m.current != nil && m.current.ws != nil:
@@ -1833,6 +1835,7 @@ func (m Model) renderHelp(h int) string {
 		row(m.keys.PrevAgent+" / "+m.keys.NextAgent, "prev / next agent"),
 		row(m.keys.PrevWorktree+" / "+m.keys.NextWorktree, "prev / next worktree"),
 		row(m.keys.ToggleStacks, "collapse or expand stacks in the bar"),
+		row(m.keys.StackPopup, "the stack's PRs, reviews and checks"),
 	)
 	if m.usageEnabled() {
 		rows = append(rows, row(m.keys.Usage, "usage limits"))

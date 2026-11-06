@@ -244,6 +244,8 @@ type Keys struct {
 	// ToggleStacks switches the bar's agent strip between collapsing the gh
 	// stacks you're not in and showing every stack in full.
 	ToggleStacks string `toml:"toggle_stacks"`
+	// StackPopup opens the current gh stack's PRs, reviews and checks.
+	StackPopup string `toml:"stack_popup"`
 	// Help toggles the key/legend overlay (works in the deck and in sessions).
 	Help string `toml:"help"`
 	// GlobalConfig opens the home-directory workspace for editing global config.
@@ -310,7 +312,7 @@ func Default() Config {
 			GotoEditor: "alt+1", GotoAgent: "alt+2", GotoTerm: "alt+3",
 			Picker:  "ctrl+g",
 			Palette: "alt+a", NextAgent: "f4", PrevAgent: "f3",
-			NextWorktree: "ctrl+l", PrevWorktree: "ctrl+h", ToggleStacks: "ctrl+y",
+			NextWorktree: "ctrl+l", PrevWorktree: "ctrl+h", ToggleStacks: "ctrl+y", StackPopup: "ctrl+s",
 			Help: "f1", GlobalConfig: "alt+g", Orchestrator: "alt+o", Attention: "alt+n", Highlight: "ctrl+q", Back: "alt+b",
 			TermSplitV: "alt+v", TermSplitH: "alt+s",
 			TermZoom: "alt+z", TermClose: "alt+x",

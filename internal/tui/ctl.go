@@ -32,6 +32,7 @@ type ctlSpawnedMsg struct {
 	err      error
 	provider agent.Provider
 	prompt   string
+	feature  string // "repo/name" of the feature the new worktree joins, or ""
 }
 
 // ctlEnterMsg presses Enter in s a moment after a queued message was pasted,
@@ -76,7 +77,7 @@ func (m Model) handleCtl(p *ctl.Pending) (tea.Model, tea.Cmd) {
 	p.Req.Worktree = m.ctlKey(p.Req.Worktree)
 	switch p.Req.Op {
 	case ctl.OpList:
-		p.Reply(ctl.Response{OK: true, Worktrees: m.ctlWorktrees()})
+		m.ctlList(p)
 	case ctl.OpSummary:
 		mm, cmd = m.ctlSummary(p)
 	case ctl.OpSpawn:
@@ -93,6 +94,14 @@ func (m Model) handleCtl(p *ctl.Pending) (tea.Model, tea.Cmd) {
 		mm, cmd = m.ctlReopen(p)
 	case ctl.OpRemove:
 		mm, cmd = m.ctlRemove(p)
+	case ctl.OpFeatureNew:
+		mm, cmd = m.ctlFeatureNew(p)
+	case ctl.OpFeatureAdd:
+		mm, cmd = m.ctlFeatureAdd(p)
+	case ctl.OpFeatureList:
+		p.Reply(ctl.Response{OK: true, Features: m.ctlFeatures()})
+	case ctl.OpFeatureDrop:
+		mm, cmd = m.ctlFeatureDrop(p)
 	default:
 		p.Fail(fmt.Errorf("unknown operation %q", p.Req.Op))
 	}
@@ -104,12 +113,19 @@ func (m Model) ctlWorktrees() []ctl.WorktreeInfo {
 	out := make([]ctl.WorktreeInfo, 0, len(m.active))
 	for _, it := range m.active {
 		info := m.ctlInfo(it)
-		if _, ok := m.mainNamed(it.repo.Name, mainAlias); ok && it.view.WT.IsMain {
-			info.Key = wsKey(it.repo.Name, mainAlias)
-		}
+		info.Key = m.ctlShownKey(it)
 		out = append(out, info)
 	}
 	return out
+}
+
+// ctlShownKey is the key ctl prints for a worktree: "<repo>/main" for the main
+// checkout, unless a real worktree is named main.
+func (m Model) ctlShownKey(it activeItem) string {
+	if _, ok := m.mainNamed(it.repo.Name, mainAlias); ok && it.view.WT.IsMain {
+		return wsKey(it.repo.Name, mainAlias)
+	}
+	return wsKey(it.repo.Name, it.view.WT.Name)
 }
 
 // ctlKey turns "<repo>/main" into the main checkout's workspace key.
@@ -139,6 +155,9 @@ func (m Model) ctlInfo(it activeItem) ctl.WorktreeInfo {
 	info.Open, info.Agents = m.ctlAgents(key)
 	if m.state != nil {
 		info.Queued = len(m.state.Queue(key))
+		if feature, ok := m.state.FeatureOf(key); ok {
+			info.Feature, info.Manager = feature, m.state.Features[feature].Manager == key
+		}
 	}
 	return info
 }
@@ -287,11 +306,16 @@ func (m Model) ctlSpawn(p *ctl.Pending) (tea.Model, tea.Cmd) {
 		p.Fail(err)
 		return m, nil
 	}
+	feature, err := m.ctlSpawnFeature(req.Repo, req.Feature)
+	if err != nil {
+		p.Fail(err)
+		return m, nil
+	}
 	m.beginCreating(r.Name, req.Name)
 	rr, name, base, prompt := *r, req.Name, req.Base, req.Text
 	create := func() tea.Msg {
 		wt, warn, err := m.ctrl.Create(rr, name, base)
-		return ctlSpawnedMsg{p: p, repo: rr, name: name, wt: wt, warn: warn, err: err, provider: provider, prompt: prompt}
+		return ctlSpawnedMsg{p: p, repo: rr, name: name, wt: wt, warn: warn, err: err, provider: provider, prompt: prompt, feature: feature}
 	}
 	return m, tea.Batch(create, m.flashCmd("creating "+name+"…"))
 }
@@ -303,6 +327,10 @@ func (m Model) handleCtlSpawned(msg ctlSpawnedMsg) (tea.Model, tea.Cmd) {
 		return m, m.loadCmd()
 	}
 	key := wsKey(msg.wt.Repo, msg.wt.Name)
+	var joinErr error
+	if msg.feature != "" {
+		joinErr = m.state.AddToFeature(msg.feature, key)
+	}
 	mm, cmd, err := m.openBackground(key, msg.wt.Path, msg.provider, msg.prompt)
 	if err != nil {
 		msg.p.Fail(fmt.Errorf("worktree created at %s but its sessions failed to start: %w", msg.wt.Path, err))
@@ -312,8 +340,14 @@ func (m Model) handleCtlSpawned(msg ctlSpawnedMsg) (tea.Model, tea.Cmd) {
 	if msg.warn != "" {
 		reply += "; some worktree files were not copied: " + msg.warn
 	}
+	switch {
+	case joinErr != nil:
+		reply += "; not added to the feature: " + joinErr.Error()
+	case msg.feature != "":
+		reply += "; it is part of feature " + msg.feature
+	}
 	msg.p.Reply(ctl.Response{OK: true, Message: reply})
-	return mm, tea.Batch(cmd, mm.loadCmd(), mm.flashCmd("orchestrator opened "+key))
+	return mm, tea.Batch(cmd, mm.writeStateCmd(), mm.loadCmd(), mm.flashCmd("orchestrator opened "+key))
 }
 
 // openBackground starts sessions for key without switching the user's view,

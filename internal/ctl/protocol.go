@@ -17,6 +17,11 @@ const (
 	OpOpen      Op = "open"
 	OpReopen    Op = "reopen"
 	OpRemove    Op = "remove"
+
+	OpFeatureNew  Op = "feature-new"
+	OpFeatureAdd  Op = "feature-add"
+	OpFeatureList Op = "feature-list"
+	OpFeatureDrop Op = "feature-drop"
 )
 
 // Request is one command for the running ct. Worktree is the "repo/name" key
@@ -38,6 +43,13 @@ type Request struct {
 	Lines int `json:"lines,omitempty"`
 	// Force lets stop and reopen close a workspace whose agent is still busy.
 	Force bool `json:"force,omitempty"`
+
+	// Feature is a feature's "repo/name". Spawn may give the name alone, since
+	// the feature is in the repo it spawns in.
+	Feature string `json:"feature,omitempty"`
+	// Manager and Notes are for feature-new.
+	Manager string `json:"manager,omitempty"`
+	Notes   string `json:"notes,omitempty"`
 }
 
 // Response is the reply to a Request. OK is false when Error is set.
@@ -49,6 +61,7 @@ type Response struct {
 
 	Worktrees []WorktreeInfo `json:"worktrees,omitempty"`
 	Summary   *Summary       `json:"summary,omitempty"`
+	Features  []FeatureInfo  `json:"features,omitempty"`
 }
 
 // WorktreeInfo is one worktree as the deck sees it, plus its hosted agents.
@@ -59,6 +72,11 @@ type WorktreeInfo struct {
 	Path   string `json:"path"`
 	Branch string `json:"branch,omitempty"`
 	Base   string `json:"base,omitempty"`
+
+	// Feature is the "repo/name" of the feature this worktree belongs to;
+	// Manager is set when it leads that feature.
+	Feature string `json:"feature,omitempty"`
+	Manager bool   `json:"manager,omitempty"`
 
 	// Open reports that ct hosts sessions for this worktree right now.
 	Open   bool        `json:"open"`
@@ -80,6 +98,21 @@ type WorktreeInfo struct {
 	Added   int    `json:"added,omitempty"`
 	Deleted int    `json:"deleted,omitempty"`
 	Subject string `json:"subject,omitempty"`
+}
+
+// FeatureInfo is one feature: its manager, the member worktrees that still
+// exist, and the gh stacks they are in.
+type FeatureInfo struct {
+	Key  string `json:"key"`
+	Repo string `json:"repo"`
+	Name string `json:"name"`
+	// Manager is "" when the manager's worktree no longer exists.
+	Manager   string   `json:"manager,omitempty"`
+	Notes     string   `json:"notes,omitempty"`
+	Worktrees []string `json:"worktrees,omitempty"`
+	// Stacks are the gh stacks of the manager and the members, as the bar
+	// names them ("#1369", or the first branch before the stack is submitted).
+	Stacks []string `json:"stacks,omitempty"`
 }
 
 // AgentInfo is one hosted agent and its live status.

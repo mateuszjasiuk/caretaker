@@ -31,6 +31,19 @@ func TestParseCtlArgs(t *testing.T) {
 		{args: []string{"remove", "r/a"}, want: ctl.Request{Op: ctl.OpRemove, Worktree: "r/a"}},
 		{args: []string{"remove", "r/a", "r/b"}, wantErr: true},
 		{args: []string{"list", "--bogus"}, wantErr: true},
+		{args: []string{"list", "--feature", "r/f"}, want: ctl.Request{Op: ctl.OpList, Feature: "r/f"}},
+		{args: []string{"list", "--feature", "f"}, wantErr: true},
+		{args: []string{"spawn", "r", "x", "--feature", "f", "go"}, want: ctl.Request{Op: ctl.OpSpawn, Repo: "r", Name: "x", Feature: "f", Text: "go"}},
+		{args: []string{"feature", "new", "r", "f", "--manager", "r/main", "--notes", "~/n"},
+			want: ctl.Request{Op: ctl.OpFeatureNew, Feature: "r/f", Manager: "r/main", Notes: "~/n"}},
+		{args: []string{"feature", "new", "r", "f"}, wantErr: true},
+		{args: []string{"feature", "add", "r/f", "r/a"}, want: ctl.Request{Op: ctl.OpFeatureAdd, Feature: "r/f", Worktree: "r/a"}},
+		{args: []string{"feature", "add", "r/f"}, wantErr: true},
+		{args: []string{"feature", "list"}, want: ctl.Request{Op: ctl.OpFeatureList}},
+		{args: []string{"feature", "drop", "r/f"}, want: ctl.Request{Op: ctl.OpFeatureDrop, Feature: "r/f"}},
+		{args: []string{"feature", "drop", "f"}, wantErr: true},
+		{args: []string{"feature", "rename"}, wantErr: true},
+		{args: []string{"feature"}, wantErr: true},
 		{args: []string{"dance"}, wantErr: true},
 	}
 	for _, tc := range cases {
@@ -105,5 +118,17 @@ func TestFormatWorktreeShowsGhStack(t *testing.T) {
 	got = formatWorktree(ctl.WorktreeInfo{Key: "r/a"})
 	if strings.Contains(got, "stack=") {
 		t.Errorf("outside a stack: %q", got)
+	}
+}
+
+func TestFormatFeatureAndMembership(t *testing.T) {
+	line := formatFeature(ctl.FeatureInfo{Key: "r/f", Worktrees: []string{"r/a", "r/b"}, Stacks: []string{"#4"}, Notes: "~/n"})
+	if want := "r/f  manager=(gone)  worktrees=r/a,r/b  stacks=#4  notes=~/n"; line != want {
+		t.Fatalf("got  %q\nwant %q", line, want)
+	}
+
+	line = formatWorktree(ctl.WorktreeInfo{Key: "r/main", Name: "(main)", Feature: "r/f", Manager: true})
+	if !strings.Contains(line, "  feature=f manager") {
+		t.Fatalf("the manager should be marked: %q", line)
 	}
 }

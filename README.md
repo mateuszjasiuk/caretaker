@@ -490,6 +490,23 @@ skill as its first prompt:
 ct ctl spawn <repo> <name> --prompt "/feature-coordinator <ticket>"
 ```
 
+ct can also record the feature, so the manager and anyone else can see which
+worktrees belong to it. A feature lives in one repo and has one manager; a
+worktree belongs to one feature at most.
+
+```sh
+ct ctl feature new allgravy sch-755 --manager allgravy/sch-755-coordinator --notes ~/Projects/allgravy/notae/sch-755-send-for-approval
+ct ctl spawn allgravy sch-795-rota --base sch-794 --feature sch-755 --prompt -   # joins the feature
+ct ctl feature add allgravy/sch-755 allgravy/some-older-worktree
+ct ctl feature list            # manager, worktrees and gh stacks of every feature
+ct ctl list --feature allgravy/sch-755
+ct ctl feature drop allgravy/sch-755   # forget it; the worktrees stay
+```
+
+`ct ctl list` marks each member with `feature=sch-755`, and the manager with
+`feature=sch-755 manager`. A removed worktree drops out of its feature's list.
+Features are kept in ct's state file, on this machine only.
+
 To stack a new session's branch with `gh stack`, spawn it on the top branch, then
 run `gh stack add <branch>` from the top branch's worktree. `gh stack` refuses
 from any other worktree.

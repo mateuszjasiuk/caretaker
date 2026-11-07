@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/KCaverly/caretaker/internal/config"
 	"github.com/KCaverly/caretaker/internal/repo"
@@ -871,6 +872,12 @@ func run() error {
 	}
 	p := tea.NewProgram(m)
 	final, err := p.Run()
+
+	// Bubble Tea turns the kitty keyboard mode off by setting its flags to 0.
+	// WezTerm (20240203) stays in kitty encoding after that and sends Up as
+	// ESC[1;1A to the shell; only a pop returns it to normal keys. On other
+	// terminals a pop with nothing pushed just leaves the flags at 0.
+	fmt.Fprint(os.Stdout, ansi.PopKittyKeyboard(1))
 	// State writes run in the background during the session; flush once
 	// synchronously so an in-flight or just-scheduled write can't be lost.
 	if fm, ok := final.(tui.Model); ok {

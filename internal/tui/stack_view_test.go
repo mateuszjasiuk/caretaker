@@ -229,7 +229,7 @@ func TestConflictingCascadeOffersRestackHotkey(t *testing.T) {
 	m.stackView.working = false
 	m.stackView.status = &st
 
-	out := m.renderStack(m.height - barHeight)
+	out := m.renderStack(m.height - m.barHeight())
 	if !strings.Contains(out, "R") || !strings.Contains(out, "restack") {
 		t.Errorf("conflicting cascade should advertise the restack hotkey:\n%s", out)
 	}
@@ -277,7 +277,7 @@ func TestMergeActionRequiresMergeableMainPR(t *testing.T) {
 	m = m.enterStackOverlay(key, "repo", "wt", stack.Params{})
 	m.stackView.working = false
 	m.stackView.status = &ready
-	if out := m.renderStack(m.height - barHeight); !strings.Contains(out, "M") || !strings.Contains(out, "merge") {
+	if out := m.renderStack(m.height - m.barHeight()); !strings.Contains(out, "M") || !strings.Contains(out, "merge") {
 		t.Errorf("ready stack should advertise M merge:\n%s", out)
 	}
 	m.stackMerge = func(stack.MergeOptions) (stack.MergeResult, error) { return stack.MergeResult{}, nil }
@@ -293,7 +293,7 @@ func TestMergeActionRequiresMergeableMainPR(t *testing.T) {
 	if m.mode != modeConfirmMerge || m.confirm.cursor != 0 {
 		t.Fatal("a ready preflight should open the merge confirmation on its safe option")
 	}
-	if out := m.renderConfirm(m.height - barHeight); !strings.Contains(out, "PR #10") ||
+	if out := m.renderConfirm(m.height - m.barHeight()); !strings.Contains(out, "PR #10") ||
 		!strings.Contains(out, "merge PR #10 into main") || !strings.Contains(out, "checks: unknown") {
 		t.Errorf("merge confirmation should identify the target and evidence:\n%s", out)
 	}
@@ -684,7 +684,7 @@ func TestStackOverlayStatus(t *testing.T) {
 	if m.stackView.working {
 		t.Fatal("overlay should leave the working state after the status lands")
 	}
-	out := m.renderStack(m.height - barHeight)
+	out := m.renderStack(m.height - m.barHeight())
 	if !strings.Contains(out, "STACK") || !strings.Contains(strings.ToLower(out), "repo") {
 		t.Errorf("overlay should show the STACK title:\n%s", out)
 	}
@@ -729,8 +729,8 @@ func TestStackOverlayRestackConfirm(t *testing.T) {
 	if !m.stackView.confirmRestack {
 		t.Fatal("dry-run should arm the restack confirm state")
 	}
-	if !strings.Contains(m.renderStack(m.height-barHeight), "restack plan") {
-		t.Errorf("overlay should show the dry-run plan:\n%s", m.renderStack(m.height-barHeight))
+	if !strings.Contains(m.renderStack(m.height-m.barHeight()), "restack plan") {
+		t.Errorf("overlay should show the dry-run plan:\n%s", m.renderStack(m.height-m.barHeight()))
 	}
 	mm, cmd2 := m.handleStack(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -814,7 +814,7 @@ func TestStackScreenStructured(t *testing.T) {
 	m.stackView.working = false
 	m.stackView.status = &st
 
-	out := m.renderStack(m.height - barHeight)
+	out := m.renderStack(m.height - m.barHeight())
 	for _, want := range []string{"tokens core", "auth tokens", "refresh flow", "#38", "next:", "▸", "move"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("structured view missing %q:\n%s", want, out)
@@ -963,7 +963,7 @@ func TestStackOverlayReuseConfirm(t *testing.T) {
 		t.Fatal("reuse palette action should use the guarded reuse pipeline")
 	}
 	m.applyStackRestack(msg)
-	if !m.stackView.confirmReuse || !strings.Contains(m.renderStack(m.height-barHeight), "reuse plan") {
+	if !m.stackView.confirmReuse || !strings.Contains(m.renderStack(m.height-m.barHeight()), "reuse plan") {
 		t.Fatal("reuse dry-run should render and arm reuse confirmation")
 	}
 	mm, cmd := m.handleStack(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -1105,7 +1105,7 @@ func TestStackSplitDiffMsgPopulatesCacheAndRenders(t *testing.T) {
 		t.Errorf("the file header should be indexed for ]/[ jumps, got %v", cd.scope.fileLines)
 	}
 
-	out := ansi.Strip(m.renderStack(m.height - barHeight))
+	out := ansi.Strip(m.renderStack(m.height - m.barHeight()))
 	for _, want := range []string{
 		"core tokens",     // left column (and the section title)
 		"refresh flow",    // the second commit still listed on the left
@@ -1129,7 +1129,7 @@ func TestStackSplitLayout(t *testing.T) {
 	m.applyStackCommitDiff(stackCommitDiffMsg{
 		key: key, sha: "aaa111", body: splitCommitDiff, stat: splitCommitStat()})
 
-	lines := strings.Split(ansi.Strip(m.renderStack(m.height-barHeight)), "\n")
+	lines := strings.Split(ansi.Strip(m.renderStack(m.height-m.barHeight())), "\n")
 	if len(lines) < 4 {
 		t.Fatalf("split render should have a header, rule, body and footer:\n%s", strings.Join(lines, "\n"))
 	}
@@ -1205,7 +1205,7 @@ func TestStackSplitDiffError(t *testing.T) {
 	if cd := m.stackView.diffCache["aaa111"]; cd.err == nil || cd.loading {
 		t.Fatalf("an errored fetch should cache the error, got %+v", cd)
 	}
-	if out := ansi.Strip(m.renderStack(m.height - barHeight)); !strings.Contains(out, "bad object") {
+	if out := ansi.Strip(m.renderStack(m.height - m.barHeight())); !strings.Contains(out, "bad object") {
 		t.Errorf("split render should surface the diff error:\n%s", out)
 	}
 }
@@ -1216,7 +1216,7 @@ func TestStackSplitFocusFlip(t *testing.T) {
 	m, _ := stackSplitModel()
 	m = enterSplit(t, m)
 
-	listOut := m.renderStack(m.height - barHeight)
+	listOut := m.renderStack(m.height - m.barHeight())
 	if !strings.Contains(ansi.Strip(listOut), "PR") {
 		t.Errorf("the list pane's footer should offer the list-only actions:\n%s", ansi.Strip(listOut))
 	}
@@ -1226,7 +1226,7 @@ func TestStackSplitFocusFlip(t *testing.T) {
 	if m.stackView.splitFocus != paneDiff || cmd != nil {
 		t.Fatalf("tab should focus the diff pane, got focus=%v cmd=%v", m.stackView.splitFocus, cmd != nil)
 	}
-	diffOut := m.renderStack(m.height - barHeight)
+	diffOut := m.renderStack(m.height - m.barHeight())
 	stripped := ansi.Strip(diffOut)
 	if !strings.Contains(stripped, "scroll") || !strings.Contains(stripped, "n / p") {
 		t.Errorf("the diff pane's footer should offer scroll and commit stepping:\n%s", stripped)
@@ -1394,7 +1394,7 @@ func TestStackSplitScrollWithoutCache(t *testing.T) {
 					t.Fatalf("scroll keys must not move the commit cursor, got %d", m.stackView.cursor)
 				}
 			}
-			if out := ansi.Strip(m.renderStack(m.height - barHeight)); !strings.Contains(out, "loading diff") {
+			if out := ansi.Strip(m.renderStack(m.height - m.barHeight())); !strings.Contains(out, "loading diff") {
 				t.Errorf("%s should render the loading notice:\n%s", tc.name, out)
 			}
 		})
@@ -1534,7 +1534,7 @@ func TestStackFootersDropTheBranchDiff(t *testing.T) {
 	m, _ := stackSplitModel()
 	m.width, m.height = 160, 40
 
-	status := ansi.Strip(m.renderStackStatus(*m.stackView.status, 0, m.height-barHeight))
+	status := ansi.Strip(m.renderStackStatus(*m.stackView.status, 0, m.height-m.barHeight()))
 	if strings.Contains(status, "v diff") {
 		t.Errorf("the status footer should no longer offer v:\n%s", status)
 	}
@@ -1542,7 +1542,7 @@ func TestStackFootersDropTheBranchDiff(t *testing.T) {
 	m = enterSplit(t, m)
 	for _, focus := range []splitPane{paneStack, paneDiff} {
 		m.stackView.splitFocus = focus
-		out := ansi.Strip(m.renderStackSplit(*m.stackView.status, 0, m.height-barHeight))
+		out := ansi.Strip(m.renderStackSplit(*m.stackView.status, 0, m.height-m.barHeight()))
 		if strings.Contains(out, "branch diff") {
 			t.Errorf("focus %v: the preview footer should no longer offer v:\n%s", focus, out)
 		}
@@ -1666,7 +1666,7 @@ func TestStackEnterStaysInertWithSplit(t *testing.T) {
 // user the preview exists.
 func TestStackStatusFooterAdvertisesPreview(t *testing.T) {
 	m, _ := stackSplitModel()
-	out := ansi.Strip(m.renderStack(m.height - barHeight))
+	out := ansi.Strip(m.renderStack(m.height - m.barHeight()))
 	if !strings.Contains(out, "preview") {
 		t.Errorf("the status footer should advertise the d preview:\n%s", out)
 	}
@@ -1856,7 +1856,7 @@ func TestStackUncommittedRendersInListAndPane(t *testing.T) {
 	m.width, m.height = 160, 40
 
 	// Full-width list.
-	plain := ansi.Strip(m.renderStackStatus(*m.stackView.status, 2, m.height-barHeight))
+	plain := ansi.Strip(m.renderStackStatus(*m.stackView.status, 2, m.height-m.barHeight()))
 	if !strings.Contains(plain, "uncommitted") {
 		t.Fatalf("the stack list should show the uncommitted row:\n%s", plain)
 	}
@@ -1870,7 +1870,7 @@ func TestStackUncommittedRendersInListAndPane(t *testing.T) {
 	m.applyStackCommitDiff(stackCommitDiffMsg{
 		key: key, sha: uncommittedKey, body: splitCommitDiff,
 		stat: splitCommitStat(), untracked: []string{"brand-new.go"}})
-	split := ansi.Strip(m.renderStackSplit(*m.stackView.status, 2, m.height-barHeight))
+	split := ansi.Strip(m.renderStackSplit(*m.stackView.status, 2, m.height-m.barHeight()))
 	for _, want := range []string{"uncommitted", "new token line", "brand-new.go"} {
 		if !strings.Contains(split, want) {
 			t.Errorf("split pane missing %q:\n%s", want, split)
@@ -1889,7 +1889,7 @@ func TestStackUncommittedUntrackedCapReported(t *testing.T) {
 		key: key, sha: uncommittedKey, body: splitCommitDiff,
 		stat: splitCommitStat(), untracked: []string{"a.go"}, untrackedExtra: 7})
 
-	pane := ansi.Strip(m.renderStackSplit(*m.stackView.status, 2, m.height-barHeight))
+	pane := ansi.Strip(m.renderStackSplit(*m.stackView.status, 2, m.height-m.barHeight()))
 	if !strings.Contains(pane, "7 more untracked") {
 		t.Errorf("the capped surplus should be named in the section rule:\n%s", pane)
 	}
@@ -1904,7 +1904,7 @@ func TestStackUncommittedEmptyReadsSensibly(t *testing.T) {
 	m.stackView.cursor = 2
 	m.applyStackCommitDiff(stackCommitDiffMsg{key: key, sha: uncommittedKey})
 
-	pane := ansi.Strip(m.renderStackSplit(*m.stackView.status, 2, m.height-barHeight))
+	pane := ansi.Strip(m.renderStackSplit(*m.stackView.status, 2, m.height-m.barHeight()))
 	if !strings.Contains(pane, "nothing uncommitted") {
 		t.Errorf("an empty uncommitted row should say so, not talk about commits:\n%s", pane)
 	}
@@ -1921,7 +1921,7 @@ func TestStackFooterSeparatesPreviewFromLeaving(t *testing.T) {
 	m.width, m.height = 160, 40
 
 	// Plain status: d opens the preview, esc returns.
-	status := ansi.Strip(m.renderStackStatus(*m.stackView.status, 0, m.height-barHeight))
+	status := ansi.Strip(m.renderStackStatus(*m.stackView.status, 0, m.height-m.barHeight()))
 	if !strings.Contains(status, "esc return") {
 		t.Errorf("the status footer should say esc returns:\n%s", status)
 	}
@@ -1933,7 +1933,7 @@ func TestStackFooterSeparatesPreviewFromLeaving(t *testing.T) {
 	m = enterSplit(t, m)
 	for _, focus := range []splitPane{paneStack, paneDiff} {
 		m.stackView.splitFocus = focus
-		out := ansi.Strip(m.renderStackSplit(*m.stackView.status, 0, m.height-barHeight))
+		out := ansi.Strip(m.renderStackSplit(*m.stackView.status, 0, m.height-m.barHeight()))
 		footer := out[strings.LastIndex(out, "\n")+1:]
 
 		if !strings.Contains(footer, "d") || !strings.Contains(footer, "close preview") {
@@ -1966,7 +1966,7 @@ func TestStackSplitNeverOverflows(t *testing.T) {
 		m.applyStackCommitDiff(stackCommitDiffMsg{
 			key: key, sha: "aaa111", body: splitCommitDiff, stat: splitCommitStat()})
 
-		for i, line := range strings.Split(m.renderStack(m.height-barHeight), "\n") {
+		for i, line := range strings.Split(m.renderStack(m.height-m.barHeight()), "\n") {
 			if got := ansi.StringWidth(line); got > w {
 				t.Fatalf("width %d: line %d is %d wide:\n%q", w, i, got, ansi.Strip(line))
 			}
@@ -1985,7 +1985,7 @@ func TestStackSplitColumnsFillTheWidth(t *testing.T) {
 			key: key, sha: "aaa111", body: strings.Repeat("+padding line\n", 100),
 			stat: splitCommitStat()})
 
-		lines := strings.Split(m.renderStackSplit(*m.stackView.status, 0, 24-barHeight), "\n")
+		lines := strings.Split(m.renderStackSplit(*m.stackView.status, 0, 24-m.barHeight()), "\n")
 		// The divider column must land in the same place on every body row.
 		var col = -1
 		for _, l := range lines[2 : len(lines)-1] {
@@ -2020,7 +2020,7 @@ func TestStackNarrowFallsBackToTheList(t *testing.T) {
 	if m.splitShown() {
 		t.Fatal("the preview must not claim to be shown below the minimum width")
 	}
-	out := ansi.Strip(m.renderStack(m.height - barHeight))
+	out := ansi.Strip(m.renderStack(m.height - m.barHeight()))
 	if strings.Contains(out, "[split]") {
 		t.Errorf("a too-narrow terminal should fall back to the list:\n%s", out)
 	}
@@ -2039,7 +2039,7 @@ func TestStackNarrowFallsBackToTheList(t *testing.T) {
 	if !m.splitShown() {
 		t.Fatal("widening past the minimum should restore the preview")
 	}
-	if !strings.Contains(ansi.Strip(m.renderStack(m.height-barHeight)), "[split]") {
+	if !strings.Contains(ansi.Strip(m.renderStack(m.height-m.barHeight())), "[split]") {
 		t.Error("the restored preview should render as a split")
 	}
 }
@@ -2087,7 +2087,7 @@ func TestStackSplitDiffUsesPagerChunks(t *testing.T) {
 	if got := cd.scope.lines[cd.scope.fileLines[0]]; got != "\x1b[1mFORMATTED core.go\x1b[0m" {
 		t.Errorf("file anchor line = %q, want the formatter's header verbatim", got)
 	}
-	out := ansi.Strip(m.renderStack(m.height - barHeight))
+	out := ansi.Strip(m.renderStack(m.height - m.barHeight()))
 	if !strings.Contains(out, "FORMATTED core.go") {
 		t.Errorf("split render should show the formatter's output:\n%s", out)
 	}
@@ -2119,7 +2119,7 @@ func TestStackSplitDiffPagerErrFlashes(t *testing.T) {
 	if !strings.Contains(m.status, "diff pager failed") || m.statusLevel != statusInfo {
 		t.Errorf("status = %q (level %v), want the pager-failure flash", m.status, m.statusLevel)
 	}
-	if out := ansi.Strip(m.renderStack(m.height - barHeight)); !strings.Contains(out, "+new token line") {
+	if out := ansi.Strip(m.renderStack(m.height - m.barHeight())); !strings.Contains(out, "+new token line") {
 		t.Errorf("the patch should still render with built-in styling:\n%s", out)
 	}
 }
@@ -2136,7 +2136,7 @@ func TestStackZoomTogglesList(t *testing.T) {
 		key: key, sha: "aaa111", body: strings.Repeat("+line\n", 40), stat: splitCommitStat()})
 
 	// Two-column layout shows both the list and the divider.
-	two := ansi.Strip(m.renderStackSplit(*m.stackView.status, 0, m.height-barHeight))
+	two := ansi.Strip(m.renderStackSplit(*m.stackView.status, 0, m.height-m.barHeight()))
 	if !strings.Contains(two, "core tokens") || !strings.Contains(two, "│") {
 		t.Fatalf("the two-column layout should show the list beside the diff:\n%s", two)
 	}
@@ -2149,7 +2149,7 @@ func TestStackZoomTogglesList(t *testing.T) {
 	if !m.stackView.diffZoom {
 		t.Fatal("z should zoom the diff")
 	}
-	zoom := ansi.Strip(m.renderStackSplit(*m.stackView.status, 0, m.height-barHeight))
+	zoom := ansi.Strip(m.renderStackSplit(*m.stackView.status, 0, m.height-m.barHeight()))
 	if strings.Contains(zoom, "│") {
 		t.Errorf("the zoomed layout should drop the commit-list column and divider:\n%s", zoom)
 	}
@@ -2232,7 +2232,7 @@ func TestStackZoomShowsBelowTwoColumnMinimum(t *testing.T) {
 		if !m.splitShown() {
 			t.Errorf("width %d: a zoomed preview should still be shown", w)
 		}
-		for _, line := range strings.Split(m.renderStack(m.height-barHeight), "\n") {
+		for _, line := range strings.Split(m.renderStack(m.height-m.barHeight()), "\n") {
 			if got := ansi.StringWidth(line); got > w {
 				t.Fatalf("width %d: zoomed line is %d wide:\n%q", w, got, ansi.Strip(line))
 			}

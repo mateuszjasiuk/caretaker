@@ -35,7 +35,7 @@ func press(t *testing.T, m Model, msg tea.KeyPressMsg) (Model, tea.Cmd) {
 }
 
 func popupText(m Model) string {
-	return ansi.Strip(m.renderGhStackPopup(m.height - barHeight))
+	return ansi.Strip(m.renderGhStackPopup(m.height - m.barHeight()))
 }
 
 func TestStackPopupListsTheStackAndFetches(t *testing.T) {

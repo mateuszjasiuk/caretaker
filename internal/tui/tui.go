@@ -36,9 +36,14 @@ import (
 	"github.com/KCaverly/caretaker/internal/usage"
 )
 
-// barHeight is the number of rows the top chrome occupies: the status bar and
-// a light separator line directly beneath it.
-const barHeight = 2
+// barHeight is the number of rows the top chrome occupies: the status bar, the
+// agent strip's row while it shows, and a light separator line.
+func (m Model) barHeight() int {
+	if m.stripShown() {
+		return 3
+	}
+	return 2
+}
 
 // screen is the active view: the picker, one of the session views, or setup.
 type screen int
@@ -1105,7 +1110,7 @@ func (m Model) repaintCmd() tea.Cmd {
 }
 
 func (m Model) sessionSize() (int, int) {
-	return m.width - m.sidePanelW(), max(1, m.height-barHeight-m.sessionFooterH())
+	return m.width - m.sidePanelW(), max(1, m.height-m.barHeight()-m.sessionFooterH())
 }
 
 // resizeSessions sizes the current workspace and the orchestrator to the room
@@ -1368,7 +1373,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.filter.SetWidth(inputW)
 		m.nameInput.SetWidth(inputW)
 		m.rootInput.SetWidth(clamp(m.width-14, 20, 52))
-		m.promptInput.MaxHeight = clamp(m.height-barHeight-10, 3, 8)
+		m.promptInput.MaxHeight = clamp(m.height-m.barHeight()-10, 3, 8)
 		m.promptInput.SetWidth(clamp(m.width-16, 20, 80))
 		m.paletteInput.SetWidth(clamp(m.width-16, 20, 52))
 		m.resizeSessions()
@@ -4147,10 +4152,10 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		// program running in it. Panes aren't drawn while an overlay is up, so a
 		// click then must not steal pane focus.
 		if m.screen == screenTerminal && m.current != nil &&
-			!m.helpOpen && !m.boardOpen && !m.usageOpen && !m.paletteOpen && !m.diffOpen && mo.Y >= barHeight &&
+			!m.helpOpen && !m.boardOpen && !m.usageOpen && !m.paletteOpen && !m.diffOpen && mo.Y >= m.barHeight() &&
 			mo.X >= m.sidePanelW() {
 			w, h := m.sessionSize()
-			m.mgr.FocusTermPaneAt(m.current.key, mo.X-m.sidePanelW(), mo.Y-barHeight, w, h)
+			m.mgr.FocusTermPaneAt(m.current.key, mo.X-m.sidePanelW(), mo.Y-m.barHeight(), w, h)
 		}
 	}
 	m.forwardMouse(msg)
@@ -4172,8 +4177,8 @@ func (m Model) deckWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	by := mo.Y - barHeight
-	L := m.deckLayout(m.height - barHeight)
+	by := mo.Y - m.barHeight()
+	L := m.deckLayout(m.height - m.barHeight())
 	switch {
 	case by >= 1 && by < 1+L.newContentH: // NEW box
 		var cmd tea.Cmd
@@ -4197,7 +4202,7 @@ func (m Model) deckWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 // already-selected row activates it — opening a worktree or starting the create
 // flow, mirroring enter. handled is false when the click misses every row.
 func (m Model) deckClick(x, y int) (tea.Model, tea.Cmd, bool) {
-	by := y - barHeight // body-relative row (bar + separator sit above)
+	by := y - m.barHeight() // body-relative row (bar + separator sit above)
 	if by < 0 {
 		return m, nil, false
 	}
@@ -4206,7 +4211,7 @@ func (m Model) deckClick(x, y int) (tea.Model, tea.Cmd, bool) {
 	if x >= m.width-m.plasmaWidth() {
 		return m, nil, false
 	}
-	L := m.deckLayout(m.height - barHeight)
+	L := m.deckLayout(m.height - m.barHeight())
 
 	// NEW box: content rows are body [1, 1+newContentH); the repo list begins at
 	// content line 4 (header, blank, input, blank).
@@ -4311,7 +4316,7 @@ func (m Model) forwardMouse(msg tea.MouseMsg) {
 	}
 	mo := msg.Mouse()
 	pw := m.sidePanelW()
-	if mo.Y < barHeight {
+	if mo.Y < m.barHeight() {
 		return
 	}
 	// Clicks and the wheel over the side panel stay out of the session. A drag
@@ -4339,7 +4344,7 @@ func (m Model) forwardMouse(msg tea.MouseMsg) {
 		if !ws.TermZoomed && len(ws.Terms) > 1 && ws.TermLayout != nil {
 			w, h := m.sessionSize()
 			bounds := session.ComputePaneBounds(ws.TermLayout, 0, 0, w, h)
-			idx := session.PaneAt(bounds, px, mo.Y-barHeight)
+			idx := session.PaneAt(bounds, px, mo.Y-m.barHeight())
 			if idx < 0 || idx >= len(ws.Terms) || ws.Terms[idx] == nil {
 				return // divider, footer, or outside every pane
 			}
@@ -4356,7 +4361,7 @@ func (m Model) forwardMouse(msg tea.MouseMsg) {
 		return
 	}
 	shift := func(p tea.Mouse) uv.Mouse {
-		return uv.Mouse{X: p.X - pw - bx, Y: p.Y - barHeight - by, Button: p.Button, Mod: uv.KeyMod(p.Mod)}
+		return uv.Mouse{X: p.X - pw - bx, Y: p.Y - m.barHeight() - by, Button: p.Button, Mod: uv.KeyMod(p.Mod)}
 	}
 	switch e := msg.(type) {
 	case tea.MouseClickMsg:
@@ -5243,7 +5248,7 @@ const diffChromeRows = 3
 // kept in step with renderDiff's own budget so scroll clamping and rendering
 // agree on the window size.
 func (m Model) diffBodyHeight() int {
-	return max(1, m.height-barHeight-diffChromeRows)
+	return max(1, m.height-m.barHeight()-diffChromeRows)
 }
 
 // handleDiff routes key events while the diff viewer is open: esc/q close it,

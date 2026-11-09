@@ -183,7 +183,7 @@ auto_merge = false
 # set; `text` uses labels; `ascii` uses stable single-cell characters.
 [display]
 icons = "nerd" # nerd | text | ascii
-# List every open worktree on the line under the bar, coloured by its agents.
+# List every open worktree on its own row under the bar, coloured by its agents.
 agent_strip = true
 
 # The diff viewer (deck `v` and the stack `d` preview). All optional.

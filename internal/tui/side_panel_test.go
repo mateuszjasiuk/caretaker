@@ -51,7 +51,7 @@ func TestSidePanelNarrowsSessionsAndIsSaved(t *testing.T) {
 		t.Fatalf("terminal width = %d, want it resized to %d", cols, 120-sidePanelWidth-1)
 	}
 	lines := strings.Split(m.View().Content, "\n")
-	if row := ansi.Strip(lines[barHeight+1]); !strings.HasPrefix(row, " repo ") || ansi.StringWidth(row) > 120 {
+	if row := ansi.Strip(lines[m.barHeight()+1]); !strings.HasPrefix(row, " repo ") || ansi.StringWidth(row) > 120 {
 		t.Fatalf("the second body row should start with the panel and fit the screen: %q", row)
 	}
 
@@ -83,12 +83,12 @@ func TestSidePanelShiftsClicksIntoPanes(t *testing.T) {
 	ws := m.current.ws
 
 	// A click on the panel stays out of the panes.
-	m.handleMouseClick(tea.MouseClickMsg{X: 5, Y: barHeight + 3, Button: tea.MouseLeft})
+	m.handleMouseClick(tea.MouseClickMsg{X: 5, Y: m.barHeight() + 3, Button: tea.MouseLeft})
 	if ws.ActiveTerm != 1 {
 		t.Fatalf("a click on the panel should not move pane focus, active=%d", ws.ActiveTerm)
 	}
 
-	m.handleMouseClick(tea.MouseClickMsg{X: m.sidePanelW() + 5, Y: barHeight + 3, Button: tea.MouseLeft})
+	m.handleMouseClick(tea.MouseClickMsg{X: m.sidePanelW() + 5, Y: m.barHeight() + 3, Button: tea.MouseLeft})
 	if ws.ActiveTerm != 0 {
 		t.Fatalf("a click just right of the panel should focus the left pane, active=%d", ws.ActiveTerm)
 	}
@@ -97,7 +97,7 @@ func TestSidePanelShiftsClicksIntoPanes(t *testing.T) {
 // panelRows is the panel's rows as plain text, without the padding.
 func panelRows(m Model) []string {
 	var rows []string
-	for _, r := range m.sidePanelRows(m.height - barHeight) {
+	for _, r := range m.sidePanelRows(m.height - m.barHeight()) {
 		rows = append(rows, strings.TrimRight(ansi.Strip(r.text), " "))
 	}
 	return rows
@@ -117,7 +117,7 @@ func TestSidePanelListsSessionsUnderTheirRepo(t *testing.T) {
 	if got != want {
 		t.Fatalf("panel rows:\n%s\nwant:\n%s", got, want)
 	}
-	for _, r := range m.sidePanelRows(m.height - barHeight) {
+	for _, r := range m.sidePanelRows(m.height - m.barHeight()) {
 		if w := ansi.StringWidth(r.text); w != sidePanelWidth {
 			t.Fatalf("every row should be %d wide, got %d: %q", sidePanelWidth, w, r.text)
 		}
@@ -151,8 +151,8 @@ func TestSidePanelSaysHowManySessionsDontFit(t *testing.T) {
 	m.sidePanel = true
 
 	rows := panelRows(m)
-	if len(rows) != m.height-barHeight {
-		t.Fatalf("the panel should fill the height: %d rows, want %d", len(rows), m.height-barHeight)
+	if len(rows) != m.height-m.barHeight() {
+		t.Fatalf("the panel should fill the height: %d rows, want %d", len(rows), m.height-m.barHeight())
 	}
 	// A blank row, the repo, 19 sessions, then "+11 more".
 	if last := rows[len(rows)-1]; last != " +11 more" {
@@ -164,7 +164,7 @@ func TestSidePanelClickOpensTheSession(t *testing.T) {
 	m := stripModel(t, 140, "alpha", "beta", "gamma") // gamma is current
 	m.sidePanel = true
 	click := func(m Model, row int) Model {
-		mm, _ := m.handleMouseClick(tea.MouseClickMsg{X: 4, Y: barHeight + row, Button: tea.MouseLeft})
+		mm, _ := m.handleMouseClick(tea.MouseClickMsg{X: 4, Y: m.barHeight() + row, Button: tea.MouseLeft})
 		return mm.(Model)
 	}
 
@@ -184,9 +184,13 @@ func TestSidePanelClickOpensTheSession(t *testing.T) {
 
 func TestSidePanelHidesTheAgentStrip(t *testing.T) {
 	m := stripModel(t, 140, "alpha", "beta")
+	if m.barHeight() != 3 || !strings.Contains(barStripRow(m), "alpha · beta") {
+		t.Fatalf("with the panel closed the strip has its own row: %q", m.renderBar())
+	}
+
 	m.sidePanel = true
-	if row := barStripRow(m); strings.Contains(row, "alpha") {
-		t.Fatalf("the strip should be gone while the panel lists the sessions: %q", row)
+	if m.barHeight() != 2 || strings.Contains(m.renderBar(), "alpha") {
+		t.Fatalf("the strip should be gone while the panel lists the sessions: %q", m.renderBar())
 	}
 	if row := barFirstRow(m); !strings.Contains(row, "repo / beta") {
 		t.Fatalf("the bar should keep its other parts: %q", row)
@@ -195,9 +199,10 @@ func TestSidePanelHidesTheAgentStrip(t *testing.T) {
 		t.Fatal("a hidden strip should take no clicks")
 	}
 
+	// The bar keeps its height under an overlay and on the deck.
 	m.helpOpen = true
-	if row := barStripRow(m); !strings.Contains(row, "alpha · beta") {
-		t.Fatalf("under an overlay the panel isn't drawn, so the strip should be back: %q", row)
+	if m.barHeight() != 2 || strings.Contains(m.renderBar(), "alpha") {
+		t.Fatalf("under an overlay the bar should not change: %q", m.renderBar())
 	}
 }
 
@@ -220,16 +225,13 @@ func TestStripMoreOpensTheSidePanel(t *testing.T) {
 		t.Fatal(`a click on "+N" should open the side panel`)
 	}
 
-	// On the deck the panel isn't drawn and the strip is back, but "+N" can't
-	// show the panel there, so it takes no click, open or closed.
+	// "+N" can't show the panel on the deck, so it takes no click there.
+	m.sidePanel = false
 	m.screen = screenPicker
-	for _, open := range []bool{true, false} {
-		m.sidePanel = open
-		_, items = m.agentStripLayout()
-		mm, _, ok = m.stripClick(items[len(items)-1].start, 1)
-		if m = mm.(Model); ok || m.sidePanel != open {
-			t.Fatalf(`on the deck "+N" should do nothing (panel open: %v)`, open)
-		}
+	_, items = m.agentStripLayout()
+	mm, _, ok = m.stripClick(items[len(items)-1].start, 1)
+	if m = mm.(Model); ok || m.sidePanel {
+		t.Fatal(`on the deck "+N" should do nothing`)
 	}
 }
 
@@ -262,7 +264,7 @@ func TestSidePanelNamesTheAccountInsteadOfABackground(t *testing.T) {
 	if got != want {
 		t.Fatalf("panel rows:\n%s\nwant:\n%s", got, want)
 	}
-	for _, r := range m.sidePanelRows(m.height - barHeight) {
+	for _, r := range m.sidePanelRows(m.height - m.barHeight()) {
 		if strings.Contains(r.text, "48;2;") {
 			t.Fatalf("panel rows should have no background: %q", r.text)
 		}

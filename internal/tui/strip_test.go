@@ -57,9 +57,9 @@ func barFirstRow(m Model) string {
 	return ansi.Strip(strings.SplitN(m.renderBar(), "\n", 2)[0])
 }
 
-// barStripRow is the bar's second row, the separator line with the agent strip.
+// barStripRow is the bar's second row, the agent strip's own row while it shows.
 func barStripRow(m Model) string {
-	return ansi.Strip(strings.SplitN(m.renderBar(), "\n", 2)[1])
+	return ansi.Strip(strings.Split(m.renderBar(), "\n")[1])
 }
 
 func TestAgentStripListsWorktreesByName(t *testing.T) {
@@ -254,7 +254,7 @@ func TestAgentStripDropsRepoNamesFirst(t *testing.T) {
 }
 
 // TestAgentStripGroupsByClaudeAccount checks that an extra account's worktrees
-// come after the default account's and sit on their own background.
+// come after the default account's and name the account after their repo.
 func TestAgentStripGroupsByClaudeAccount(t *testing.T) {
 	m := stripModelKeys(t, 140, "front/zeta", "home/alpha", "back/beta")
 	var homePath string
@@ -267,17 +267,8 @@ func TestAgentStripGroupsByClaudeAccount(t *testing.T) {
 		"private": {ConfigDir: t.TempDir(), Folders: []string{homePath}},
 	}
 
-	if row, want := barStripRow(m), "front: zeta │ back: beta │ home: alpha"; !strings.Contains(row, want) {
-		t.Fatalf("the private worktree should come last, want %q in %q", want, row)
-	}
-	raw := strings.SplitN(m.renderBar(), "\n", 2)[1]
-	tint := "48;2;58;40;64" // cAccountBg as a truecolor background
-	at := strings.Index(raw, tint)
-	if at < 0 {
-		t.Fatalf("no account background in %q", raw)
-	}
-	if before := ansi.Strip(raw[:at]); strings.Contains(before, "alpha") || !strings.Contains(before, "beta") {
-		t.Fatalf("the background should start at the private block, before it: %q", before)
+	if row, want := barStripRow(m), "front: zeta │ back: beta │ home · private: alpha"; !strings.Contains(row, want) {
+		t.Fatalf("the private worktree should come last, under its account, want %q in %q", want, row)
 	}
 }
 
@@ -309,7 +300,7 @@ func TestStripExpandsTheCurrentStackInStackOrder(t *testing.T) {
 	m := stackStripModel(t)
 	mm, _ := m.activate("repo", "c", m.active[2].view.WT.Path)
 	m = mm.(Model)
-	if row, want := barStripRow(m), "⛁ #4: a · b · c · d · beta · zed"; !strings.Contains(row, want) {
+	if row, want := barStripRow(m), "⛁ #4: a · b · c · d │ beta · zed"; !strings.Contains(row, want) {
 		t.Fatalf("want %q in %q", want, row)
 	}
 }
@@ -351,7 +342,7 @@ func TestStripStackWithOneOpenWorktreeIsPlain(t *testing.T) {
 func TestToggleStacksShowsEveryStackAndIsSaved(t *testing.T) {
 	m := stackStripModel(t)
 	m = pressCtrl(t, m, 'y')
-	if row, want := barStripRow(m), "⛁ #4: a · b · c · d · beta · zed"; !strings.Contains(row, want) {
+	if row, want := barStripRow(m), "⛁ #4: a · b · c · d │ beta · zed"; !strings.Contains(row, want) {
 		t.Fatalf("want %q in %q", want, row)
 	}
 	if !m.state.StacksExpanded {
@@ -402,46 +393,60 @@ func TestClickOnCollapsedStackOpensLastUsed(t *testing.T) {
 	}
 }
 
-// TestStripStackSitsOnItsOwnBackground checks that the stack's tint covers the
-// stack from its name to its last worktree, and stops before the next one.
-func TestStripStackSitsOnItsOwnBackground(t *testing.T) {
+// TestStripClosesTheStackYouAreIn checks that "│" marks where the stack you're
+// in ends, as the strip has no background to show it.
+func TestStripClosesTheStackYouAreIn(t *testing.T) {
 	m := stackStripModel(t)
 	mm, _ := m.activate("repo", "c", m.active[2].view.WT.Path)
 	m = mm.(Model)
 
-	raw := strings.SplitN(m.renderBar(), "\n", 2)[1]
-	tint := "48;2;31;58;54" // cStackBg as a truecolor background
-	first, last := strings.Index(raw, tint), strings.LastIndex(raw, tint)
-	if first < 0 {
-		t.Fatalf("no stack background in %q", raw)
+	if row, want := barStripRow(m), "⛁ #4: a · b · c · d │ beta · zed"; !strings.Contains(row, want) {
+		t.Fatalf("want %q in %q", want, row)
 	}
-	if before := ansi.Strip(raw[:first]); strings.Contains(before, "⛁") {
-		t.Fatalf("the background should start at the stack's name, before it: %q", before)
-	}
-	tinted := ansi.Strip(raw[first:last])
-	if !strings.Contains(tinted, "a · b · c") || strings.Contains(tinted, "beta") {
-		t.Fatalf("the background should cover a to d and stop before beta: %q", tinted)
+	if raw := m.renderBar(); strings.Contains(raw, "48;2;") {
+		t.Fatalf("the strip should have no background: %q", raw)
 	}
 
 	m = pressCtrl(t, m, 'l')
 	m = pressCtrl(t, m, 'l') // to beta, so the stack collapses
-	raw = strings.SplitN(m.renderBar(), "\n", 2)[1]
-	if at := strings.Index(raw, tint); at < 0 || !strings.Contains(ansi.Strip(raw[at:]), "⛁ #4") {
-		t.Fatalf("a collapsed stack keeps its background: %q", raw)
+	if row, want := barStripRow(m), "⛁ #4 · beta · zed"; !strings.Contains(row, want) {
+		t.Fatalf("a collapsed stack is one item, want %q in %q", want, row)
 	}
 }
 
-func TestAgentStripSitsOnTheSeparatorLine(t *testing.T) {
+func TestAgentStripHasItsOwnRow(t *testing.T) {
 	m := stripModel(t, 90, "alpha", "beta", "a-very-long-worktree-name-for-the-label")
 
 	if row := barFirstRow(m); strings.Contains(row, "alpha") || !strings.Contains(row, "repo / a-very-long-worktree-name-for-the-label") {
 		t.Fatalf("the first row should keep the full label and no strip: %q", row)
 	}
-	row := barStripRow(m)
-	if !strings.HasPrefix(row, "── a-very-long-worktree-name-for-t… · alpha · beta ─") {
-		t.Fatalf("the strip should sit on the separator line: %q", row)
+	rows := strings.Split(ansi.Strip(m.renderBar()), "\n")
+	if len(rows) != 3 || rows[1] != "  a-very-long-worktree-name-for-t… · alpha · beta" {
+		t.Fatalf("the strip should have a plain row between the bar and its line: %q", rows)
 	}
-	if got := ansi.StringWidth(row); got != m.width {
-		t.Fatalf("the separator line should be %d wide, got %d", m.width, got)
+	if rows[2] != strings.Repeat("─", m.width) {
+		t.Fatalf("the last row should be the separator line: %q", rows[2])
+	}
+}
+
+func TestStripRowShortensSessionsAndShiftsClicks(t *testing.T) {
+	m := stripModel(t, 140, "alpha")
+	m.screen = screenTerminal
+	if m.barHeight() != 3 {
+		t.Fatalf("bar height = %d, want 3 with the strip shown", m.barHeight())
+	}
+	if _, h := m.sessionSize(); h != m.height-3-m.sessionFooterH() {
+		t.Fatalf("session height = %d, want %d", h, m.height-3-m.sessionFooterH())
+	}
+
+	w, h := m.sessionSize()
+	if _, err := m.mgr.SplitTermPane("repo/alpha", t.TempDir(), m.ctrl.TermSpec(), session.SplitH, w, h); err != nil {
+		t.Fatal(err)
+	}
+	ws := m.current.ws
+	// The top pane's first row is screen row 3, under the bar, the strip and the line.
+	m.handleMouseClick(tea.MouseClickMsg{X: 5, Y: 3, Button: tea.MouseLeft})
+	if ws.ActiveTerm != 0 {
+		t.Fatalf("a click on the first row under the bar should focus the top pane, active=%d", ws.ActiveTerm)
 	}
 }

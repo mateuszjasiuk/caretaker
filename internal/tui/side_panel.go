@@ -44,7 +44,7 @@ func (m Model) toggleSidePanel() (tea.Model, tea.Cmd) {
 // withSidePanel draws the side panel to the left of a session body and moves
 // the session's cursor to the right by the panel's width.
 func (m Model) withSidePanel(body string, cursor *tea.Cursor) (string, *tea.Cursor) {
-	h := m.height - barHeight
+	h := m.height - m.barHeight()
 	rows := m.sidePanelRows(h)
 	texts := make([]string, len(rows))
 	for i, r := range rows {
@@ -60,12 +60,12 @@ func (m Model) withSidePanel(body string, cursor *tea.Cursor) (string, *tea.Curs
 // sidePanelClick handles a left click on the side panel: a session's row opens
 // that session, like a click on the agent strip. Other rows do nothing.
 func (m Model) sidePanelClick(x, y int) (tea.Model, tea.Cmd, bool) {
-	if x >= m.sidePanelW() || y < barHeight || !m.sidePanelShown() {
+	if x >= m.sidePanelW() || y < m.barHeight() || !m.sidePanelShown() {
 		return m, nil, false
 	}
 
-	rows := m.sidePanelRows(m.height - barHeight)
-	if i := y - barHeight; i < len(rows) && rows[i].group != nil {
+	rows := m.sidePanelRows(m.height - m.barHeight())
+	if i := y - m.barHeight(); i < len(rows) && rows[i].group != nil {
 		mm, cmd := m.openStripGroup(*rows[i].group)
 		return mm, cmd, true
 	}
@@ -126,7 +126,7 @@ func (m Model) sidePanelLayout() []sidePanelRow {
 			rows = append(rows, sidePanelRow{text: sidePanelRepo(g)})
 		}
 
-		inStack := g.stack.Index > 0 && g.members == nil
+		inStack := inGhStack(g)
 		if inStack && (i == 0 || !sameGhStack(groups[i-1], g)) {
 			name := dimStyle.Render("   " + truncateTo(ghStackIcon+" "+g.stack.Name(), sidePanelWidth-3))
 			rows = append(rows, sidePanelRow{text: padLine(name, sidePanelWidth)})
@@ -163,10 +163,7 @@ func (m Model) sidePanelEntry(g agentGroup, indent string) string {
 // sidePanelRepo renders a repo's header row. An extra Claude account's block
 // names the account after the repo, as the panel has no background to mark it.
 func sidePanelRepo(g agentGroup) string {
-	tag := ""
-	if g.account != "" {
-		tag = " · " + g.account
-	}
+	tag := accountTag(g)
 	repo := truncateTo(g.repo, sidePanelWidth-1-lipgloss.Width(tag))
 	return padLine(repoHdrStyle.Render(" "+repo)+dimStyle.Render(tag), sidePanelWidth)
 }

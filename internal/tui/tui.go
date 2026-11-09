@@ -311,6 +311,8 @@ type Model struct {
 	agentStrip bool // list open worktrees after the bar icons
 	// stacksExpanded shows every gh stack in full in the agent strip.
 	stacksExpanded bool
+	// sidePanel is true while the session list on the left is open.
+	sidePanel bool
 	// ghPopup is the open gh stack popup, nil when closed.
 	ghPopup *ghStackPopup
 	// ghPRs is what GitHub last said about each stack's PRs, by stack.
@@ -597,6 +599,7 @@ func New(ctrl *Controller, mgr *session.Manager) Model {
 	return Model{
 		ctrl: ctrl, mgr: mgr, state: saved,
 		stacksExpanded: saved.StacksExpanded,
+		sidePanel:      saved.SidePanel,
 		keys:           ctrl.Keys(),
 		iconMode:       ctrl.DisplayIcons(),
 		agentStrip:     ctrl.AgentStrip(),
@@ -1102,7 +1105,22 @@ func (m Model) repaintCmd() tea.Cmd {
 }
 
 func (m Model) sessionSize() (int, int) {
-	return m.width, max(1, m.height-barHeight-m.sessionFooterH())
+	return m.width - m.sidePanelW(), max(1, m.height-barHeight-m.sessionFooterH())
+}
+
+// resizeSessions sizes the current workspace and the orchestrator to the room
+// left for sessions.
+func (m Model) resizeSessions() {
+	// Only the current workspace is resized; background ones are brought up
+	// to date by Activate when they next become current.
+	if m.current != nil {
+		w, h := m.sessionSize()
+		m.mgr.ResizeWorkspace(m.current.key, w, h)
+	}
+	if m.screen == screenOrchestrator && m.mgr.Has(m.orchKey) {
+		w, h := m.sessionSize()
+		m.mgr.ResizeWorkspace(m.orchKey, w, h)
+	}
 }
 
 // dismissHint retires the session help hint on the user's first keystroke into
@@ -1354,16 +1372,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.promptInput.MaxHeight = clamp(m.height-barHeight-10, 3, 8)
 		m.promptInput.SetWidth(clamp(m.width-16, 20, 80))
 		m.paletteInput.SetWidth(clamp(m.width-16, 20, 52))
-		// Only the current workspace is resized; background ones are brought up
-		// to date by Activate when they next become current.
-		if m.current != nil {
-			w, h := m.sessionSize()
-			m.mgr.ResizeWorkspace(m.current.key, w, h)
-		}
-		if m.screen == screenOrchestrator && m.mgr.Has(m.orchKey) {
-			w, h := m.sessionSize()
-			m.mgr.ResizeWorkspace(m.orchKey, w, h)
-		}
+		m.resizeSessions()
 		return m, nil
 
 	case loadedMsg:
@@ -3635,6 +3644,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.rotateWorktree(-1)
 		case m.keys.ToggleStacks:
 			return m.toggleStacks()
+		case m.keys.SidePanel:
+			return m.toggleSidePanel()
 		case m.keys.StackPopup:
 			return m.openGhStackPopup()
 		}
@@ -3760,7 +3771,7 @@ func (m Model) isReservedActionKey(s string) bool {
 	switch s {
 	case m.keys.Cycle, m.keys.CycleBack, m.keys.Picker, m.keys.Palette,
 		m.keys.Attention, m.keys.Highlight, m.keys.GlobalConfig, m.keys.Orchestrator, m.keys.NextAgent, m.keys.PrevAgent,
-		m.keys.NextWorktree, m.keys.PrevWorktree, m.keys.ToggleStacks, m.keys.StackPopup,
+		m.keys.NextWorktree, m.keys.PrevWorktree, m.keys.ToggleStacks, m.keys.SidePanel, m.keys.StackPopup,
 		m.keys.CommandPalette, m.keys.GotoEditor, m.keys.GotoAgent, m.keys.GotoTerm:
 		return true
 	}
@@ -4133,9 +4144,10 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		// program running in it. Panes aren't drawn while an overlay is up, so a
 		// click then must not steal pane focus.
 		if m.screen == screenTerminal && m.current != nil &&
-			!m.helpOpen && !m.boardOpen && !m.usageOpen && !m.paletteOpen && !m.diffOpen && mo.Y >= barHeight {
+			!m.helpOpen && !m.boardOpen && !m.usageOpen && !m.paletteOpen && !m.diffOpen && mo.Y >= barHeight &&
+			mo.X >= m.sidePanelW() {
 			w, h := m.sessionSize()
-			m.mgr.FocusTermPaneAt(m.current.key, mo.X, mo.Y-barHeight, w, h)
+			m.mgr.FocusTermPaneAt(m.current.key, mo.X-m.sidePanelW(), mo.Y-barHeight, w, h)
 		}
 	}
 	m.forwardMouse(msg)
@@ -4295,19 +4307,21 @@ func (m Model) forwardMouse(msg tea.MouseMsg) {
 		return
 	}
 	mo := msg.Mouse()
-	if mo.Y < barHeight {
+	if mo.Y < barHeight || mo.X < m.sidePanelW() {
 		return
 	}
 	// Target session and the pane origin to subtract from the pointer. Default:
-	// the active session, offset only by the bar (bx, by stay 0).
+	// the active session, offset only by the bar and the side panel (bx, by
+	// stay 0).
 	s := m.activeSession()
+	px := mo.X - m.sidePanelW()
 	bx, by := 0, 0
 	if m.screen == screenTerminal && m.current != nil && m.current.ws != nil {
 		ws := m.current.ws
 		if !ws.TermZoomed && len(ws.Terms) > 1 && ws.TermLayout != nil {
 			w, h := m.sessionSize()
 			bounds := session.ComputePaneBounds(ws.TermLayout, 0, 0, w, h)
-			idx := session.PaneAt(bounds, mo.X, mo.Y-barHeight)
+			idx := session.PaneAt(bounds, px, mo.Y-barHeight)
 			if idx < 0 || idx >= len(ws.Terms) || ws.Terms[idx] == nil {
 				return // divider, footer, or outside every pane
 			}
@@ -4324,7 +4338,7 @@ func (m Model) forwardMouse(msg tea.MouseMsg) {
 		return
 	}
 	shift := func(p tea.Mouse) uv.Mouse {
-		return uv.Mouse{X: p.X - bx, Y: p.Y - barHeight - by, Button: p.Button, Mod: uv.KeyMod(p.Mod)}
+		return uv.Mouse{X: p.X - m.sidePanelW() - bx, Y: p.Y - barHeight - by, Button: p.Button, Mod: uv.KeyMod(p.Mod)}
 	}
 	switch e := msg.(type) {
 	case tea.MouseClickMsg:

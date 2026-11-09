@@ -137,15 +137,16 @@ func (m Model) View() tea.View {
 	case m.screen == screenPicker:
 		body = m.renderDeck(h - barHeight)
 	case m.screen == screenTerminal && m.current != nil && m.current.ws != nil:
-		body, cursor = m.renderTermPanes(w, h-barHeight-m.sessionFooterH())
-		body = m.appendSessionFooter(body)
+		sw, sh := m.sessionSize()
+		body, cursor = m.renderTermPanes(sw, sh)
+		body, cursor = m.withSidePanel(m.appendSessionFooter(body), cursor)
 	default:
 		if s := m.activeSession(); s != nil {
 			body = s.Render()
 			if x, y, visible := s.Cursor(); visible {
 				cursor = tea.NewCursor(x, y+barHeight)
 			}
-			body = m.appendSessionFooter(body)
+			body, cursor = m.withSidePanel(m.appendSessionFooter(body), cursor)
 		}
 	}
 
@@ -2055,9 +2056,10 @@ func (m Model) sessionFooter() string {
 		hints = append([]string{keyhint(m.keys.Back, "return")}, hints...)
 	}
 	sep := helpStyle.Render("  ·  ")
+	w, _ := m.sessionSize()
 	for n := len(hints); n >= 1; n-- {
 		second := "  " + strings.Join(hints[:n], sep)
-		if lipgloss.Width(second) <= m.width {
+		if lipgloss.Width(second) <= w {
 			return first + "\n" + second
 		}
 	}

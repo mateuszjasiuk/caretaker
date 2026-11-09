@@ -163,6 +163,7 @@ func TestDefaultKeymap(t *testing.T) {
 		"prev_wt":     d.Keys.PrevWorktree,
 		"stacks":      d.Keys.ToggleStacks,
 		"popup":       d.Keys.StackPopup,
+		"side_panel":  d.Keys.SidePanel,
 		"split_v":     d.Keys.TermSplitV,
 		"split_h":     d.Keys.TermSplitH,
 		"zoom":        d.Keys.TermZoom,
@@ -176,7 +177,7 @@ func TestDefaultKeymap(t *testing.T) {
 		"cycle": "alt+]", "cycle_back": "alt+[",
 		"goto_editor": "alt+1", "goto_agent": "alt+2", "goto_term": "alt+3",
 		"palette": "alt+a", "global": "alt+g", "prompt": "alt+y", "back": "alt+b",
-		"next_wt": "ctrl+l", "prev_wt": "ctrl+h", "stacks": "ctrl+y", "popup": "ctrl+s",
+		"next_wt": "ctrl+l", "prev_wt": "ctrl+h", "stacks": "ctrl+y", "popup": "ctrl+s", "side_panel": "ctrl+\\",
 		"split_v": "alt+v", "split_h": "alt+s", "zoom": "alt+z", "close": "alt+x",
 		"focus_left": "alt+h", "focus_down": "alt+j", "focus_up": "alt+k", "focus_right": "alt+l",
 	}

@@ -28,6 +28,8 @@ type State struct {
 	// StacksExpanded is true when the bar's agent strip shows every gh stack in
 	// full instead of collapsing the ones you're not in.
 	StacksExpanded bool `json:"stacks_expanded,omitempty"`
+	// SidePanel is true when the session list on the left is open.
+	SidePanel bool `json:"side_panel,omitempty"`
 	// Features maps "repo/name" to a feature: its manager and the worktrees
 	// that build it.
 	Features map[string]*Feature `json:"features,omitempty"`

@@ -2450,7 +2450,7 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 			s += repoHdrStyle.Render(truncateTo(g.repo, 16)) + barSep.Render(": ")
 		}
 		if inGhStack(g) && (i == 0 || !sameGhStack(groups[i-1], g)) {
-			s += onStack(dimStyle, g).Render(ghStackIcon+" "+truncateTo(g.stack.Name(), 16)) + onStack(barSep, g).Render(": ")
+			s += onStack(stackNameStyle, g).Render(ghStackIcon+" "+truncateTo(g.stack.Name(), 16)) + onStack(barSep, g).Render(": ")
 		}
 		return s
 	}
@@ -2583,6 +2583,10 @@ func (m Model) stripLook(g agentGroup, idle lipgloss.Style) (sign string, signSt
 	}
 	return sign, signSt, nameSt
 }
+
+// stackNameStyle names a gh stack in the strip: brighter than its worktrees,
+// dimmer than a repo name.
+var stackNameStyle = lipgloss.NewStyle().Foreground(cFg3)
 
 // onStack puts st on the gh stack background when g is in a stack, shown in
 // full or collapsed into one entry.

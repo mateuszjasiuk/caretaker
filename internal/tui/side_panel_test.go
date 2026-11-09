@@ -185,15 +185,18 @@ func TestSidePanelClickOpensTheSession(t *testing.T) {
 func TestSidePanelHidesTheAgentStrip(t *testing.T) {
 	m := stripModel(t, 140, "alpha", "beta")
 	m.sidePanel = true
-	if row := barFirstRow(m); strings.Contains(row, "alpha") || !strings.Contains(row, "repo / beta") {
-		t.Fatalf("the bar should keep only its other parts while the panel lists the sessions: %q", row)
+	if row := barStripRow(m); strings.Contains(row, "alpha") {
+		t.Fatalf("the strip should be gone while the panel lists the sessions: %q", row)
 	}
-	if _, _, ok := m.stripClick(40, 0); ok {
+	if row := barFirstRow(m); !strings.Contains(row, "repo / beta") {
+		t.Fatalf("the bar should keep its other parts: %q", row)
+	}
+	if _, _, ok := m.stripClick(10, 1); ok {
 		t.Fatal("a hidden strip should take no clicks")
 	}
 
 	m.helpOpen = true
-	if row := barFirstRow(m); !strings.Contains(row, "alpha · beta") {
+	if row := barStripRow(m); !strings.Contains(row, "alpha · beta") {
 		t.Fatalf("under an overlay the panel isn't drawn, so the strip should be back: %q", row)
 	}
 }
@@ -211,7 +214,7 @@ func TestStripMoreOpensTheSidePanel(t *testing.T) {
 		t.Fatalf("the strip's last item should be \"+N\": %+v", more)
 	}
 
-	mm, _, ok := m.stripClick(more.start, 0)
+	mm, _, ok := m.stripClick(more.start, 1)
 	m = mm.(Model)
 	if !ok || !m.sidePanel {
 		t.Fatal(`a click on "+N" should open the side panel`)
@@ -223,7 +226,7 @@ func TestStripMoreOpensTheSidePanel(t *testing.T) {
 	for _, open := range []bool{true, false} {
 		m.sidePanel = open
 		_, items = m.agentStripLayout()
-		mm, _, ok = m.stripClick(items[len(items)-1].start, 0)
+		mm, _, ok = m.stripClick(items[len(items)-1].start, 1)
 		if m = mm.(Model); ok || m.sidePanel != open {
 			t.Fatalf(`on the deck "+N" should do nothing (panel open: %v)`, open)
 		}
@@ -236,5 +239,32 @@ func TestSidePanelInATinyTerminalDoesNotCrash(t *testing.T) {
 	for _, h := range []int{3, 2, 1} {
 		m.height = h
 		m.handleMouseClick(tea.MouseClickMsg{X: 4, Y: h - 1, Button: tea.MouseLeft})
+	}
+}
+
+func TestSidePanelNamesTheAccountInsteadOfABackground(t *testing.T) {
+	m := stackStripModel(t)
+	m.sidePanel = true
+	mm, _ := m.activate("repo", "c", m.active[2].view.WT.Path) // inside the stack
+	m = mm.(Model)
+	var zedPath string
+	for _, it := range m.active {
+		if it.view.WT.Name == "zed" {
+			zedPath = it.view.WT.Path
+		}
+	}
+	m.ctrl.cfg.ClaudeAccounts = map[string]config.ClaudeAccount{
+		"private": {ConfigDir: t.TempDir(), Folders: []string{zedPath}},
+	}
+
+	got := strings.Join(panelRows(m)[:10], "\n")
+	want := strings.Join([]string{"", " repo", "   ⛁ #4", "     a", "     b", "     c", "     d", "   beta", " repo · private", "   zed"}, "\n")
+	if got != want {
+		t.Fatalf("panel rows:\n%s\nwant:\n%s", got, want)
+	}
+	for _, r := range m.sidePanelRows(m.height - barHeight) {
+		if strings.Contains(r.text, "48;2;") {
+			t.Fatalf("panel rows should have no background: %q", r.text)
+		}
 	}
 }

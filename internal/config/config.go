@@ -97,8 +97,8 @@ const (
 type Display struct {
 	// Icons selects persistent navigation and pane symbols: nerd, text, or ascii.
 	Icons string `toml:"icons"`
-	// AgentStrip lists every open worktree after the bar icons, coloured by
-	// its agents' status. On by default.
+	// AgentStrip lists every open worktree on the line under the bar, coloured
+	// by its agents' status. On by default.
 	AgentStrip bool `toml:"agent_strip"`
 }
 

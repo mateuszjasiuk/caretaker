@@ -96,7 +96,7 @@ func (m Model) sidePanelRows(h int) []sidePanelRow {
 				hidden++
 			}
 		}
-		more := sidePanelRow{text: panelLine(lipgloss.NewStyle(), dimStyle.Render(fmt.Sprintf(" +%d more", hidden)))}
+		more := sidePanelRow{text: padLine(dimStyle.Render(fmt.Sprintf(" +%d more", hidden)), sidePanelWidth)}
 		layout = append(layout[:room-1], more)
 	}
 
@@ -123,16 +123,13 @@ func (m Model) sidePanelLayout() []sidePanelRow {
 	for i, g := range groups {
 		newRepo := i == 0 || groups[i-1].repo != g.repo || groups[i-1].account != g.account
 		if newRepo && g.key != m.homeWSKey {
-			acc := g.account != ""
-			name := onAccount(repoHdrStyle, acc).Render(" " + truncateTo(g.repo, sidePanelWidth-1))
-			rows = append(rows, sidePanelRow{text: panelLine(onAccount(lipgloss.NewStyle(), acc), name)})
+			rows = append(rows, sidePanelRow{text: sidePanelRepo(g)})
 		}
 
 		inStack := g.stack.Index > 0 && g.members == nil
 		if inStack && (i == 0 || !sameGhStack(groups[i-1], g)) {
-			bg := lipgloss.NewStyle().Background(cStackBg)
-			name := dimStyle.Background(cStackBg).Render("   " + truncateTo(ghStackIcon+" "+g.stack.Name(), sidePanelWidth-3))
-			rows = append(rows, sidePanelRow{text: panelLine(bg, name)})
+			name := dimStyle.Render("   " + truncateTo(ghStackIcon+" "+g.stack.Name(), sidePanelWidth-3))
+			rows = append(rows, sidePanelRow{text: padLine(name, sidePanelWidth)})
 		}
 
 		indent := ""
@@ -147,7 +144,6 @@ func (m Model) sidePanelLayout() []sidePanelRow {
 // sidePanelEntry renders one session's row: its attention sign in the first
 // column, then its name in the agent strip's colours.
 func (m Model) sidePanelEntry(g agentGroup, indent string) string {
-	bg := stripBg(lipgloss.NewStyle(), g)
 	sign, signSt, st := m.stripLook(g, panelIdleStyle)
 	if sign == "" {
 		sign = " "
@@ -160,12 +156,17 @@ func (m Model) sidePanelEntry(g agentGroup, indent string) string {
 	case g.members != nil:
 		name = ghStackIcon + " " + g.worktree
 	}
-	text := bg.Render(" ") + stripBg(signSt, g).Render(sign) + bg.Render(" "+indent) +
-		stripBg(st, g).Render(truncateTo(name, sidePanelWidth-3-len(indent)))
-	return panelLine(bg, text)
+	text := " " + signSt.Render(sign) + " " + indent + st.Render(truncateTo(name, sidePanelWidth-3-len(indent)))
+	return padLine(text, sidePanelWidth)
 }
 
-// panelLine pads a rendered row to the panel's width on the row's background.
-func panelLine(bg lipgloss.Style, text string) string {
-	return text + bg.Render(strings.Repeat(" ", max(0, sidePanelWidth-lipgloss.Width(text))))
+// sidePanelRepo renders a repo's header row. An extra Claude account's block
+// names the account after the repo, as the panel has no background to mark it.
+func sidePanelRepo(g agentGroup) string {
+	tag := ""
+	if g.account != "" {
+		tag = " · " + g.account
+	}
+	repo := truncateTo(g.repo, sidePanelWidth-1-lipgloss.Width(tag))
+	return padLine(repoHdrStyle.Render(" "+repo)+dimStyle.Render(tag), sidePanelWidth)
 }

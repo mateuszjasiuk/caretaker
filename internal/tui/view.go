@@ -243,7 +243,7 @@ const (
 )
 
 // renderBar draws the pinned status bar plus a light separator directly
-// beneath it (barHeight rows total). The four left icons (caretaker, nvim,
+// beneath it (barHeight rows total), which carries the agent strip. The four left icons (caretaker, nvim,
 // claude, term) are bold Nerd Font glyphs evenly spaced: the caretaker is a
 // stable seedling, lit yellow while the deck is active and dim once you drop
 // into a session; the session icons glow in their own colour when active and
@@ -255,12 +255,14 @@ func (m Model) renderBar() string {
 	// Right side: notification zone (! N  ✓ N) then the workspace context. Its
 	// layout (and the click targets within it) is derived once by barRightZones.
 	right := m.barRightZones().text
-	strip, _ := m.agentStripLayout()
-	left += strip
-
 	gap := max(1, m.width-lipgloss.Width(left)-lipgloss.Width(right))
 	bar := ansi.Truncate(left+strings.Repeat(" ", gap)+right, m.width, "")
-	sep := barSep.Render(strings.Repeat("─", max(1, m.width)))
+
+	sep, _ := m.agentStripLayout()
+	if sep != "" {
+		sep += " "
+	}
+	sep += barSep.Render(strings.Repeat("─", max(1, m.width-lipgloss.Width(sep))))
 	return bar + "\n" + sep
 }
 
@@ -2363,11 +2365,11 @@ type stripItem struct {
 	start, end int  // absolute bar columns, end exclusive
 }
 
-// stripSep sits between the bar icons and the agent strip.
-var stripSep = "   " + barSep.Render("│") + "  "
+// stripSep leads the agent strip on the separator line under the bar.
+var stripSep = barSep.Render("── ")
 
-// agentStripLayout lays the agent strip out in the bar's first row, between the
-// icons and the right-side facts: each open worktree's name, coloured by its
+// agentStripLayout lays the agent strip out on the separator line under the
+// bar, so it has the full width: each open worktree's name, coloured by its
 // agents (yellow working, green ✓ done, red ! waiting, white seen but not
 // answered or highlighted, dim idle), with the current worktree underlined. With more than
 // one repo open, each repo's worktrees follow its name. A gh stack you're not in
@@ -2383,8 +2385,7 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 	if len(groups) == 0 {
 		return "", nil
 	}
-	leftW := lipgloss.Width(m.renderBarLeft())
-	avail := m.width - leftW - lipgloss.Width(m.barRightZones().text) - 1 - lipgloss.Width(stripSep)
+	avail := m.width - lipgloss.Width(stripSep) - 2 // a space and a "─" after it
 	if avail < 8 {
 		return "", nil
 	}
@@ -2453,7 +2454,7 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 
 	// Build the strip from the first n items, with "+N" for the rest.
 	build := func(texts []string, n int, withRepo bool) (string, []stripItem) {
-		col := leftW + lipgloss.Width(stripSep)
+		col := lipgloss.Width(stripSep)
 		var b strings.Builder
 		var items []stripItem
 		for i := range n {
@@ -2511,7 +2512,7 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 
 // stripClick handles a left click on the agent strip.
 func (m Model) stripClick(x, y int) (tea.Model, tea.Cmd, bool) {
-	if y != 0 {
+	if y != 1 {
 		return m, nil, false
 	}
 	_, items := m.agentStripLayout()

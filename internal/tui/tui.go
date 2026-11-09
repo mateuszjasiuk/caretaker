@@ -4135,6 +4135,9 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		if mm, cmd, ok := m.stripClick(mo.X, mo.Y); ok {
 			return mm, cmd
 		}
+		if mm, cmd, ok := m.sidePanelClick(mo.X, mo.Y); ok {
+			return mm, cmd
+		}
 		if m.screen == screenPicker && !m.helpOpen && !m.paletteOpen && !m.diffOpen && !m.stackOpen && m.ghPopup == nil {
 			if mm, cmd, ok := m.deckClick(mo.X, mo.Y); ok {
 				return mm, cmd

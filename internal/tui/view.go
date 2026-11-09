@@ -2354,7 +2354,8 @@ func windowBounds(n, cursor, height int) (int, int) {
 // stripItem is one worktree in the bar's agent strip, with its column span.
 type stripItem struct {
 	group      agentGroup
-	start, end int // absolute bar columns, end exclusive
+	more       bool // the "+N" for worktrees that don't fit; a click opens the side panel
+	start, end int  // absolute bar columns, end exclusive
 }
 
 // stripSep sits between the bar icons and the agent strip.
@@ -2367,9 +2368,10 @@ var stripSep = "   " + barSep.Render("│") + "  "
 // one repo open, each repo's worktrees follow its name. A gh stack you're not in
 // shows as one item, and the stack you're in follows its name. Repo names go first
 // when space is short, then names shorten, then items are dropped and show as
-// "+N". Returns "" when the strip is off or doesn't fit.
+// "+N". Returns "" when the strip is off, doesn't fit, or the side panel lists
+// the sessions instead.
 func (m Model) agentStripLayout() (string, []stripItem) {
-	if !m.agentStrip {
+	if !m.agentStrip || m.sidePanelShown() {
 		return "", nil
 	}
 	groups := m.stripEntries()
@@ -2455,7 +2457,7 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 	}
 
 	// Build the strip from the first n items, with "+N" for the rest.
-	build := func(texts []string, n int, withRepo bool) (string, []stripItem) {
+	build := func(texts []string, n int, withRepo, hint bool) (string, []stripItem) {
 		col := leftW + lipgloss.Width(stripSep)
 		var b strings.Builder
 		var items []stripItem
@@ -2469,17 +2471,19 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 			col += w
 		}
 		if rest := len(texts) - n; rest > 0 {
-			b.WriteString(dimStyle.Render(" +" + strconv.Itoa(rest)))
+			more := m.stripMore(rest, hint)
+			b.WriteString(more)
+			items = append(items, stripItem{more: true, start: col + 1, end: col + lipgloss.Width(more)})
 		}
 		return stripSep + b.String(), items
 	}
-	width := func(texts []string, n int, withRepo bool) int {
+	width := func(texts []string, n int, withRepo, hint bool) int {
 		w := 0
 		for i := range n {
 			w += lipgloss.Width(lead(i, withRepo)) + lipgloss.Width(texts[i])
 		}
 		if rest := len(texts) - n; rest > 0 {
-			w += lipgloss.Width(" +" + strconv.Itoa(rest))
+			w += lipgloss.Width(m.stripMore(rest, hint))
 		}
 		return w
 	}
@@ -2497,17 +2501,33 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 			for _, g := range groups {
 				texts = append(texts, item(g, maxW, withRepo))
 			}
-			if width(texts, len(texts), withRepo) <= avail {
-				return build(texts, len(texts), withRepo)
+			if width(texts, len(texts), withRepo, false) <= avail {
+				return build(texts, len(texts), withRepo, false)
 			}
 		}
 	}
+	// "+N" names the side panel's key while the panel is closed, unless that
+	// would drop one more item.
+	hint := !m.sidePanel && m.keys.SidePanel != ""
 	for n := len(texts) - 1; n >= 1; n-- {
-		if width(texts, n, false) <= avail {
-			return build(texts, n, false)
+		if hint && width(texts, n, false, true) <= avail {
+			return build(texts, n, false, true)
+		}
+		if width(texts, n, false, false) <= avail {
+			return build(texts, n, false, false)
 		}
 	}
 	return "", nil
+}
+
+// stripMore is the strip's "+N" for the worktrees that don't fit, with the
+// side panel's key when hint is true.
+func (m Model) stripMore(rest int, hint bool) string {
+	s := dimStyle.Render(" +" + strconv.Itoa(rest))
+	if hint {
+		s += " " + helpKeyStyle.Render(m.keys.SidePanel)
+	}
+	return s
 }
 
 // stripClick handles a left click on the agent strip.
@@ -2519,6 +2539,10 @@ func (m Model) stripClick(x, y int) (tea.Model, tea.Cmd, bool) {
 	for _, it := range items {
 		if x < it.start || x >= it.end {
 			continue
+		}
+		if it.more {
+			mm, cmd := m.openSidePanel()
+			return mm, cmd, true
 		}
 		mm, cmd := m.openStripGroup(it.group)
 		return mm, cmd, true

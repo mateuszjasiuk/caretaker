@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -50,8 +51,8 @@ func TestSidePanelNarrowsSessionsAndIsSaved(t *testing.T) {
 		t.Fatalf("terminal width = %d, want it resized to %d", cols, 120-sidePanelWidth-1)
 	}
 	lines := strings.Split(m.View().Content, "\n")
-	if row := ansi.Strip(lines[barHeight]); !strings.HasPrefix(row, " sessions") || ansi.StringWidth(row) > 120 {
-		t.Fatalf("first body row should start with the panel and fit the screen: %q", row)
+	if row := ansi.Strip(lines[barHeight+1]); !strings.HasPrefix(row, " repo ") || ansi.StringWidth(row) > 120 {
+		t.Fatalf("the second body row should start with the panel and fit the screen: %q", row)
 	}
 
 	m = pressSidePanel(t, m)
@@ -90,5 +91,145 @@ func TestSidePanelShiftsClicksIntoPanes(t *testing.T) {
 	m.handleMouseClick(tea.MouseClickMsg{X: m.sidePanelW() + 5, Y: barHeight + 3, Button: tea.MouseLeft})
 	if ws.ActiveTerm != 0 {
 		t.Fatalf("a click just right of the panel should focus the left pane, active=%d", ws.ActiveTerm)
+	}
+}
+
+// panelRows is the panel's rows as plain text, without the padding.
+func panelRows(m Model) []string {
+	var rows []string
+	for _, r := range m.sidePanelRows(m.height - barHeight) {
+		rows = append(rows, strings.TrimRight(ansi.Strip(r.text), " "))
+	}
+	return rows
+}
+
+func TestSidePanelListsSessionsUnderTheirRepo(t *testing.T) {
+	m := stripModelKeys(t, 140, "api/zeta", "api/alpha", "web/main")
+	m.sidePanel = true
+	ws, _ := m.mgr.Workspace("api/zeta")
+	if len(ws.Agents) == 0 {
+		t.Skip("workspace started without an agent")
+	}
+	m.agentStatus = map[int]AgentStatus{ws.Agents[0].Pid(): {Status: "waiting"}}
+
+	got := strings.Join(panelRows(m)[:6], "\n")
+	want := strings.Join([]string{"", " api", "   alpha", " ! zeta", " web", "   main"}, "\n")
+	if got != want {
+		t.Fatalf("panel rows:\n%s\nwant:\n%s", got, want)
+	}
+	for _, r := range m.sidePanelRows(m.height - barHeight) {
+		if w := ansi.StringWidth(r.text); w != sidePanelWidth {
+			t.Fatalf("every row should be %d wide, got %d: %q", sidePanelWidth, w, r.text)
+		}
+	}
+}
+
+func TestSidePanelFollowsTheStackToggle(t *testing.T) {
+	m := stackStripModel(t)
+	m.sidePanel = true
+
+	got := strings.Join(panelRows(m)[:5], "\n")
+	want := strings.Join([]string{"", " repo", "   ⛁ #4", "   beta", "   zed"}, "\n")
+	if got != want {
+		t.Fatalf("a stack you're not in should be one row:\n%s\nwant:\n%s", got, want)
+	}
+
+	m = pressCtrl(t, m, 'y')
+	got = strings.Join(panelRows(m)[:9], "\n")
+	want = strings.Join([]string{"", " repo", "   ⛁ #4", "     a", "     b", "     c", "     d", "   beta", "   zed"}, "\n")
+	if got != want {
+		t.Fatalf("ctrl+y should show the stack in full:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestSidePanelSaysHowManySessionsDontFit(t *testing.T) {
+	var names []string
+	for i := range 30 {
+		names = append(names, fmt.Sprintf("wt%02d", i))
+	}
+	m := stripModel(t, 140, names...)
+	m.sidePanel = true
+
+	rows := panelRows(m)
+	if len(rows) != m.height-barHeight {
+		t.Fatalf("the panel should fill the height: %d rows, want %d", len(rows), m.height-barHeight)
+	}
+	// A blank row, the repo, 19 sessions, then "+11 more".
+	if last := rows[len(rows)-1]; last != " +11 more" {
+		t.Fatalf("last row = %q, want \" +11 more\"", last)
+	}
+}
+
+func TestSidePanelClickOpensTheSession(t *testing.T) {
+	m := stripModel(t, 140, "alpha", "beta", "gamma") // gamma is current
+	m.sidePanel = true
+	click := func(m Model, row int) Model {
+		mm, _ := m.handleMouseClick(tea.MouseClickMsg{X: 4, Y: barHeight + row, Button: tea.MouseLeft})
+		return mm.(Model)
+	}
+
+	// Rows: blank, "repo", alpha, beta, gamma.
+	if m = click(m, 1); m.current.worktree != "gamma" {
+		t.Fatalf("a click on the repo's row should do nothing, current = %q", m.current.worktree)
+	}
+	if m = click(m, 2); m.current.worktree != "alpha" {
+		t.Fatalf("a click on alpha's row should open it, current = %q", m.current.worktree)
+	}
+
+	m.helpOpen = true
+	if m = click(m, 3); m.current.worktree != "alpha" {
+		t.Fatalf("the panel isn't drawn under help, so a click should do nothing, current = %q", m.current.worktree)
+	}
+}
+
+func TestSidePanelHidesTheAgentStrip(t *testing.T) {
+	m := stripModel(t, 140, "alpha", "beta")
+	m.sidePanel = true
+	if row := barFirstRow(m); strings.Contains(row, "alpha") || !strings.Contains(row, "repo / beta") {
+		t.Fatalf("the bar should keep only its other parts while the panel lists the sessions: %q", row)
+	}
+	if _, _, ok := m.stripClick(40, 0); ok {
+		t.Fatal("a hidden strip should take no clicks")
+	}
+
+	m.helpOpen = true
+	if row := barFirstRow(m); !strings.Contains(row, "alpha · beta") {
+		t.Fatalf("under an overlay the panel isn't drawn, so the strip should be back: %q", row)
+	}
+}
+
+func TestStripMoreOpensTheSidePanel(t *testing.T) {
+	var names []string
+	for i := range 12 {
+		names = append(names, fmt.Sprintf("worktree-%02d", i))
+	}
+	m := stripModel(t, 120, names...)
+
+	row := barFirstRow(m)
+	if !strings.Contains(row, `ctrl+\`) {
+		t.Fatalf(`"+N" should name the side panel's key: %q`, row)
+	}
+	_, items := m.agentStripLayout()
+	more := items[len(items)-1]
+	if !more.more {
+		t.Fatalf("the strip's last item should be \"+N\": %+v", more)
+	}
+
+	mm, _, ok := m.stripClick(more.start, 0)
+	m = mm.(Model)
+	if !ok || !m.sidePanel {
+		t.Fatal(`a click on "+N" should open the side panel`)
+	}
+
+	// On the deck the panel isn't drawn and the strip is back, without the
+	// key: pressing it now would close the panel.
+	m.screen = screenPicker
+	if row := barFirstRow(m); strings.Contains(row, `ctrl+\`) || !strings.Contains(row, "+") {
+		t.Fatalf(`with the panel open, "+N" should show without the key: %q`, row)
+	}
+	_, items = m.agentStripLayout()
+	mm, _, ok = m.stripClick(items[len(items)-1].start, 0)
+	if m = mm.(Model); !ok || !m.sidePanel {
+		t.Fatal(`a click on "+N" with the panel already open should keep it open`)
 	}
 }

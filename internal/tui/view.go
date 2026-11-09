@@ -2358,7 +2358,7 @@ func windowBounds(n, cursor, height int) (int, int) {
 // stripItem is one worktree in the bar's agent strip, with its column span.
 type stripItem struct {
 	group      agentGroup
-	more       bool // the "+N" for worktrees that don't fit; a click opens the side panel
+	more       bool // the "+N" for worktrees that don't fit; a click can open the side panel
 	start, end int  // absolute bar columns, end exclusive
 }
 
@@ -2519,7 +2519,14 @@ func (m Model) stripClick(x, y int) (tea.Model, tea.Cmd, bool) {
 			continue
 		}
 		if it.more {
-			mm, cmd := m.openSidePanel()
+			// "+N" opens the side panel only where the panel would then show:
+			// not on the deck, under an overlay or in a narrow terminal.
+			opened := m
+			opened.sidePanel = true
+			if m.sidePanel || !opened.sidePanelShown() {
+				return m, nil, false
+			}
+			mm, cmd := m.toggleSidePanel()
 			return mm, cmd, true
 		}
 		mm, cmd := m.openStripGroup(it.group)

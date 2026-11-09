@@ -217,11 +217,24 @@ func TestStripMoreOpensTheSidePanel(t *testing.T) {
 		t.Fatal(`a click on "+N" should open the side panel`)
 	}
 
-	// On the deck the panel isn't drawn and the strip is back.
+	// On the deck the panel isn't drawn and the strip is back, but "+N" can't
+	// show the panel there, so it takes no click, open or closed.
 	m.screen = screenPicker
-	_, items = m.agentStripLayout()
-	mm, _, ok = m.stripClick(items[len(items)-1].start, 0)
-	if m = mm.(Model); !ok || !m.sidePanel {
-		t.Fatal(`a click on "+N" with the panel already open should keep it open`)
+	for _, open := range []bool{true, false} {
+		m.sidePanel = open
+		_, items = m.agentStripLayout()
+		mm, _, ok = m.stripClick(items[len(items)-1].start, 0)
+		if m = mm.(Model); ok || m.sidePanel != open {
+			t.Fatalf(`on the deck "+N" should do nothing (panel open: %v)`, open)
+		}
+	}
+}
+
+func TestSidePanelInATinyTerminalDoesNotCrash(t *testing.T) {
+	m := stripModel(t, 140, "alpha", "beta", "gamma")
+	m.sidePanel = true
+	for _, h := range []int{3, 2, 1} {
+		m.height = h
+		m.handleMouseClick(tea.MouseClickMsg{X: 4, Y: h - 1, Button: tea.MouseLeft})
 	}
 }

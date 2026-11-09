@@ -36,14 +36,6 @@ func (m Model) toggleSidePanel() (tea.Model, tea.Cmd) {
 	return m, m.writeStateCmd()
 }
 
-// openSidePanel opens the side panel; a no-op when it is already open.
-func (m Model) openSidePanel() (tea.Model, tea.Cmd) {
-	if m.sidePanel {
-		return m, nil
-	}
-	return m.toggleSidePanel()
-}
-
 // withSidePanel draws the side panel to the left of a session body and moves
 // the session's cursor to the right by the panel's width.
 func (m Model) withSidePanel(body string, cursor *tea.Cursor) (string, *tea.Cursor) {
@@ -85,6 +77,10 @@ func (m Model) sidePanelShown() bool {
 // sidePanelRows lays out the panel's h rows, each sidePanelWidth wide: a blank
 // row under the bar, then the sessions, with "+N more" when they don't fit.
 func (m Model) sidePanelRows(h int) []sidePanelRow {
+	if h < 2 {
+		return nil
+	}
+
 	blank := sidePanelRow{text: strings.Repeat(" ", sidePanelWidth)}
 	layout := m.sidePanelLayout()
 

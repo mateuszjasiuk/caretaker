@@ -1113,12 +1113,11 @@ func (m Model) sessionSize() (int, int) {
 func (m Model) resizeSessions() {
 	// Only the current workspace is resized; background ones are brought up
 	// to date by Activate when they next become current.
+	w, h := m.sessionSize()
 	if m.current != nil {
-		w, h := m.sessionSize()
 		m.mgr.ResizeWorkspace(m.current.key, w, h)
 	}
 	if m.screen == screenOrchestrator && m.mgr.Has(m.orchKey) {
-		w, h := m.sessionSize()
 		m.mgr.ResizeWorkspace(m.orchKey, w, h)
 	}
 }
@@ -4312,8 +4311,22 @@ func (m Model) forwardMouse(msg tea.MouseMsg) {
 	}
 	mo := msg.Mouse()
 	pw := m.sidePanelW()
-	if mo.Y < barHeight || mo.X < pw {
+	if mo.Y < barHeight {
 		return
+	}
+	// Clicks and the wheel over the side panel stay out of the session. A drag
+	// that leaves the session over the panel still gets its motion and release,
+	// at the panel's edge, or the program would think the button is still down.
+	if mo.X < pw {
+		switch msg.(type) {
+		case tea.MouseClickMsg, tea.MouseWheelMsg:
+			return
+		case tea.MouseMotionMsg:
+			if mo.Button == tea.MouseNone {
+				return
+			}
+		}
+		mo.X = pw
 	}
 	// Target session and the pane origin to subtract from the pointer. Default:
 	// the active session, offset only by the bar and the side panel (bx, by
@@ -4347,9 +4360,9 @@ func (m Model) forwardMouse(msg tea.MouseMsg) {
 	}
 	switch e := msg.(type) {
 	case tea.MouseClickMsg:
-		s.SendMouse(uv.MouseClickEvent(shift(e.Mouse())))
+		s.SendMouse(uv.MouseClickEvent(shift(mo)))
 	case tea.MouseReleaseMsg:
-		s.SendMouse(uv.MouseReleaseEvent(shift(e.Mouse())))
+		s.SendMouse(uv.MouseReleaseEvent(shift(mo)))
 	case tea.MouseWheelMsg:
 		if normalizedProvider(s.Provider) == agent.Codex && m.codexTranscript[s] {
 			if seq, ok := codexTranscriptWheel(e.Mouse().Button); ok {
@@ -4365,9 +4378,9 @@ func (m Model) forwardMouse(msg tea.MouseMsg) {
 		if m.screen == screenTerminal && m.scrollTermPaneWheel(s, e.Mouse().Button == tea.MouseWheelUp) {
 			return
 		}
-		s.SendMouse(uv.MouseWheelEvent(shift(e.Mouse())))
+		s.SendMouse(uv.MouseWheelEvent(shift(mo)))
 	case tea.MouseMotionMsg:
-		s.SendMouse(uv.MouseMotionEvent(shift(e.Mouse())))
+		s.SendMouse(uv.MouseMotionEvent(shift(mo)))
 	}
 }
 

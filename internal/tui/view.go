@@ -27,6 +27,7 @@ var (
 	cYellow = lipgloss.Color("#FABD2F") // bright yellow
 	cRed    = lipgloss.Color("#FB4934") // bright red
 	cFg     = lipgloss.Color("#EBDBB2") // fg1
+	cFg3    = lipgloss.Color("#BDAE93") // fg3
 	cDim    = lipgloss.Color("#928374") // gray
 	cFaint  = lipgloss.Color("#665C54") // bg3
 	cSelBg  = lipgloss.Color("#665C54") // bg3 (strong selection)
@@ -2416,7 +2417,7 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 	}
 	item := func(g agentGroup, maxW int, withRepo bool) string {
 		name := truncateTo(label(g, withRepo), maxW)
-		sign, _, st := m.stripLook(g)
+		sign, _, st := m.stripLook(g, dimStyle)
 		if sign == "!" || sign == "✓" {
 			name = sign + " " + name
 		}
@@ -2557,9 +2558,9 @@ func (m Model) openStripGroup(g agentGroup) (tea.Model, tea.Cmd) {
 // stripLook is how the strip and the side panel show a worktree's agents: the
 // sign ("!" waiting, "✓" done, "●" working, "" otherwise), the sign's style, and
 // the name's style, which is underlined in the accent colour for the current
-// worktree.
-func (m Model) stripLook(g agentGroup) (sign string, signSt, nameSt lipgloss.Style) {
-	sign, signSt = "", dimStyle
+// worktree. idle is the style of a worktree with nothing to show.
+func (m Model) stripLook(g agentGroup, idle lipgloss.Style) (sign string, signSt, nameSt lipgloss.Style) {
+	sign, signSt = "", idle
 	switch {
 	case g.attn == attnWaiting:
 		sign, signSt = "!", boldRed

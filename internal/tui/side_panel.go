@@ -8,6 +8,11 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// panelIdleStyle is a session with nothing to show. The panel is a list to
+// read, so it is lighter than the bar's dim gray, but still darker than a
+// seen or highlighted session.
+var panelIdleStyle = lipgloss.NewStyle().Foreground(cFg3)
+
 const (
 	// sidePanelWidth is the side panel's width, without the divider after it.
 	sidePanelWidth = 28
@@ -119,14 +124,14 @@ func (m Model) sidePanelLayout() []sidePanelRow {
 		newRepo := i == 0 || groups[i-1].repo != g.repo || groups[i-1].account != g.account
 		if newRepo && g.key != m.homeWSKey {
 			acc := g.account != ""
-			name := onAccount(dimStyle.Bold(true), acc).Render(" " + truncateTo(g.repo, sidePanelWidth-1))
+			name := onAccount(repoHdrStyle, acc).Render(" " + truncateTo(g.repo, sidePanelWidth-1))
 			rows = append(rows, sidePanelRow{text: panelLine(onAccount(lipgloss.NewStyle(), acc), name)})
 		}
 
 		inStack := g.stack.Index > 0 && g.members == nil
 		if inStack && (i == 0 || !sameGhStack(groups[i-1], g)) {
 			bg := lipgloss.NewStyle().Background(cStackBg)
-			name := barSep.Background(cStackBg).Render("   " + truncateTo(ghStackIcon+" "+g.stack.Name(), sidePanelWidth-3))
+			name := dimStyle.Background(cStackBg).Render("   " + truncateTo(ghStackIcon+" "+g.stack.Name(), sidePanelWidth-3))
 			rows = append(rows, sidePanelRow{text: panelLine(bg, name)})
 		}
 
@@ -143,7 +148,7 @@ func (m Model) sidePanelLayout() []sidePanelRow {
 // column, then its name in the agent strip's colours.
 func (m Model) sidePanelEntry(g agentGroup, indent string) string {
 	bg := stripBg(lipgloss.NewStyle(), g)
-	sign, signSt, st := m.stripLook(g)
+	sign, signSt, st := m.stripLook(g, panelIdleStyle)
 	if sign == "" {
 		sign = " "
 	}

@@ -36,6 +36,7 @@ func stripModelKeys(t *testing.T, w int, keys ...string) Model {
 	t.Cleanup(mgr.CloseAll)
 
 	m := New(ctrl, mgr)
+	m.sidePanel = false // New reads the real state file
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: 24})
 	m = mm.(Model)
 	for _, key := range keys {

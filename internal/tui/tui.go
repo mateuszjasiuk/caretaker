@@ -4311,14 +4311,15 @@ func (m Model) forwardMouse(msg tea.MouseMsg) {
 		return
 	}
 	mo := msg.Mouse()
-	if mo.Y < barHeight || mo.X < m.sidePanelW() {
+	pw := m.sidePanelW()
+	if mo.Y < barHeight || mo.X < pw {
 		return
 	}
 	// Target session and the pane origin to subtract from the pointer. Default:
 	// the active session, offset only by the bar and the side panel (bx, by
 	// stay 0).
 	s := m.activeSession()
-	px := mo.X - m.sidePanelW()
+	px := mo.X - pw
 	bx, by := 0, 0
 	if m.screen == screenTerminal && m.current != nil && m.current.ws != nil {
 		ws := m.current.ws
@@ -4342,7 +4343,7 @@ func (m Model) forwardMouse(msg tea.MouseMsg) {
 		return
 	}
 	shift := func(p tea.Mouse) uv.Mouse {
-		return uv.Mouse{X: p.X - m.sidePanelW() - bx, Y: p.Y - barHeight - by, Button: p.Button, Mod: uv.KeyMod(p.Mod)}
+		return uv.Mouse{X: p.X - pw - bx, Y: p.Y - barHeight - by, Button: p.Button, Mod: uv.KeyMod(p.Mod)}
 	}
 	switch e := msg.(type) {
 	case tea.MouseClickMsg:

@@ -205,10 +205,6 @@ func TestStripMoreOpensTheSidePanel(t *testing.T) {
 	}
 	m := stripModel(t, 120, names...)
 
-	row := barFirstRow(m)
-	if !strings.Contains(row, `ctrl+\`) {
-		t.Fatalf(`"+N" should name the side panel's key: %q`, row)
-	}
 	_, items := m.agentStripLayout()
 	more := items[len(items)-1]
 	if !more.more {
@@ -221,12 +217,8 @@ func TestStripMoreOpensTheSidePanel(t *testing.T) {
 		t.Fatal(`a click on "+N" should open the side panel`)
 	}
 
-	// On the deck the panel isn't drawn and the strip is back, without the
-	// key: pressing it now would close the panel.
+	// On the deck the panel isn't drawn and the strip is back.
 	m.screen = screenPicker
-	if row := barFirstRow(m); strings.Contains(row, `ctrl+\`) || !strings.Contains(row, "+") {
-		t.Fatalf(`with the panel open, "+N" should show without the key: %q`, row)
-	}
 	_, items = m.agentStripLayout()
 	mm, _, ok = m.stripClick(items[len(items)-1].start, 0)
 	if m = mm.(Model); !ok || !m.sidePanel {

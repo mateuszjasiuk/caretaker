@@ -139,15 +139,18 @@ func (m Model) View() tea.View {
 	case m.screen == screenTerminal && m.current != nil && m.current.ws != nil:
 		sw, sh := m.sessionSize()
 		body, cursor = m.renderTermPanes(sw, sh)
-		body, cursor = m.withSidePanel(m.appendSessionFooter(body), cursor)
+		body = m.appendSessionFooter(body)
 	default:
 		if s := m.activeSession(); s != nil {
 			body = s.Render()
 			if x, y, visible := s.Cursor(); visible {
 				cursor = tea.NewCursor(x, y+barHeight)
 			}
-			body, cursor = m.withSidePanel(m.appendSessionFooter(body), cursor)
+			body = m.appendSessionFooter(body)
 		}
+	}
+	if m.sidePanelShown() {
+		body, cursor = m.withSidePanel(body, cursor)
 	}
 
 	v := tea.NewView(chrome + "\n" + body)
@@ -2413,19 +2416,9 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 	}
 	item := func(g agentGroup, maxW int, withRepo bool) string {
 		name := truncateTo(label(g, withRepo), maxW)
-		st := dimStyle
-		switch {
-		case g.attn == attnWaiting:
-			name, st = "! "+name, boldRed
-		case g.attn == attnDone:
-			name, st = "✓ "+name, boldGreen
-		case g.busy:
-			st = dirtyStyle
-		case g.attn == attnSeen || g.highlighted:
-			st = nameStyle
-		}
-		if m.current != nil && g.key == m.current.key {
-			st = st.Foreground(cAccent).Underline(true)
+		sign, _, st := m.stripLook(g)
+		if sign == "!" || sign == "✓" {
+			name = sign + " " + name
 		}
 		return stripBg(st, g).Render(name)
 	}
@@ -2458,7 +2451,7 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 	}
 
 	// Build the strip from the first n items, with "+N" for the rest.
-	build := func(texts []string, n int, withRepo, hint bool) (string, []stripItem) {
+	build := func(texts []string, n int, withRepo bool) (string, []stripItem) {
 		col := leftW + lipgloss.Width(stripSep)
 		var b strings.Builder
 		var items []stripItem
@@ -2472,19 +2465,19 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 			col += w
 		}
 		if rest := len(texts) - n; rest > 0 {
-			more := m.stripMore(rest, hint)
+			more := dimStyle.Render(" +" + strconv.Itoa(rest))
 			b.WriteString(more)
 			items = append(items, stripItem{more: true, start: col + 1, end: col + lipgloss.Width(more)})
 		}
 		return stripSep + b.String(), items
 	}
-	width := func(texts []string, n int, withRepo, hint bool) int {
+	width := func(texts []string, n int, withRepo bool) int {
 		w := 0
 		for i := range n {
 			w += lipgloss.Width(lead(i, withRepo)) + lipgloss.Width(texts[i])
 		}
 		if rest := len(texts) - n; rest > 0 {
-			w += lipgloss.Width(m.stripMore(rest, hint))
+			w += lipgloss.Width(" +" + strconv.Itoa(rest))
 		}
 		return w
 	}
@@ -2502,33 +2495,17 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 			for _, g := range groups {
 				texts = append(texts, item(g, maxW, withRepo))
 			}
-			if width(texts, len(texts), withRepo, false) <= avail {
-				return build(texts, len(texts), withRepo, false)
+			if width(texts, len(texts), withRepo) <= avail {
+				return build(texts, len(texts), withRepo)
 			}
 		}
 	}
-	// "+N" names the side panel's key while the panel is closed, unless that
-	// would drop one more item.
-	hint := !m.sidePanel && m.keys.SidePanel != ""
 	for n := len(texts) - 1; n >= 1; n-- {
-		if hint && width(texts, n, false, true) <= avail {
-			return build(texts, n, false, true)
-		}
-		if width(texts, n, false, false) <= avail {
-			return build(texts, n, false, false)
+		if width(texts, n, false) <= avail {
+			return build(texts, n, false)
 		}
 	}
 	return "", nil
-}
-
-// stripMore is the strip's "+N" for the worktrees that don't fit, with the
-// side panel's key when hint is true.
-func (m Model) stripMore(rest int, hint bool) string {
-	s := dimStyle.Render(" +" + strconv.Itoa(rest))
-	if hint {
-		s += " " + helpKeyStyle.Render(m.keys.SidePanel)
-	}
-	return s
 }
 
 // stripClick handles a left click on the agent strip.
@@ -2568,6 +2545,30 @@ func (m Model) openStripGroup(g agentGroup) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m.activate(g.repo, g.worktree, g.path)
+}
+
+// stripLook is how the strip and the side panel show a worktree's agents: the
+// sign ("!" waiting, "✓" done, "●" working, "" otherwise), the sign's style, and
+// the name's style, which is underlined in the accent colour for the current
+// worktree.
+func (m Model) stripLook(g agentGroup) (sign string, signSt, nameSt lipgloss.Style) {
+	sign, signSt = "", dimStyle
+	switch {
+	case g.attn == attnWaiting:
+		sign, signSt = "!", boldRed
+	case g.attn == attnDone:
+		sign, signSt = "✓", boldGreen
+	case g.busy:
+		sign, signSt = "●", dirtyStyle
+	case g.attn == attnSeen || g.highlighted:
+		signSt = nameStyle
+	}
+
+	nameSt = signSt
+	if m.current != nil && g.key == m.current.key {
+		nameSt = nameSt.Foreground(cAccent).Underline(true)
+	}
+	return sign, signSt, nameSt
 }
 
 // stripBg puts a strip item on its block's background: its gh stack's, else its

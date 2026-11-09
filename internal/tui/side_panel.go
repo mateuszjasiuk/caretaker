@@ -47,29 +47,17 @@ func (m Model) openSidePanel() (tea.Model, tea.Cmd) {
 // withSidePanel draws the side panel to the left of a session body and moves
 // the session's cursor to the right by the panel's width.
 func (m Model) withSidePanel(body string, cursor *tea.Cursor) (string, *tea.Cursor) {
-	pw := m.sidePanelW()
-	if pw == 0 {
-		return body, cursor
-	}
-
-	lines := strings.Split(body, "\n")
-	for len(lines) < m.height-barHeight {
-		lines = append(lines, "")
-	}
-	rows := m.sidePanelRows(len(lines))
-	div := barSep.Render("│")
-	var b strings.Builder
-	for i, l := range lines {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		b.WriteString(rows[i].text + div + l)
+	h := m.height - barHeight
+	rows := m.sidePanelRows(h)
+	texts := make([]string, len(rows))
+	for i, r := range rows {
+		texts[i] = r.text
 	}
 
 	if cursor != nil {
-		cursor.X += pw
+		cursor.X += m.sidePanelW()
 	}
-	return b.String(), cursor
+	return joinVerticalSplit(strings.Join(texts, "\n"), body, cFaint, h, sidePanelWidth), cursor
 }
 
 // sidePanelClick handles a left click on the side panel: a session's row opens
@@ -108,7 +96,7 @@ func (m Model) sidePanelRows(h int) []sidePanelRow {
 			}
 		}
 		more := sidePanelRow{text: panelLine(lipgloss.NewStyle(), dimStyle.Render(fmt.Sprintf(" +%d more", hidden)))}
-		layout = append(layout[:room-1:room-1], more)
+		layout = append(layout[:room-1], more)
 	}
 
 	rows := append([]sidePanelRow{blank}, layout...)
@@ -159,19 +147,9 @@ func (m Model) sidePanelLayout() []sidePanelRow {
 // column, then its name in the agent strip's colours.
 func (m Model) sidePanelEntry(g agentGroup, indent string) string {
 	bg := stripBg(lipgloss.NewStyle(), g)
-	sign, signSt, st := " ", dimStyle, dimStyle
-	switch {
-	case g.attn == attnWaiting:
-		sign, signSt, st = "!", boldRed, boldRed
-	case g.attn == attnDone:
-		sign, signSt, st = "✓", boldGreen, boldGreen
-	case g.busy:
-		sign, signSt, st = "●", dirtyStyle, dirtyStyle
-	case g.attn == attnSeen || g.highlighted:
-		st = nameStyle
-	}
-	if m.current != nil && g.key == m.current.key {
-		st = st.Foreground(cAccent).Underline(true)
+	sign, signSt, st := m.stripLook(g)
+	if sign == "" {
+		sign = " "
 	}
 
 	name := g.worktree

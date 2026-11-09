@@ -1839,6 +1839,7 @@ func (m Model) renderHelp(h int) string {
 		row(m.keys.PrevAgent+" / "+m.keys.NextAgent, "prev / next agent"),
 		row(m.keys.PrevWorktree+" / "+m.keys.NextWorktree, "prev / next worktree"),
 		row(m.keys.ToggleStacks, "collapse or expand stacks in the bar"),
+		row(m.keys.SidePanel, "session list on the left (toggle)"),
 		row(m.keys.StackPopup, "the stack's PRs, reviews and checks"),
 	)
 	if m.usageEnabled() {

@@ -2782,6 +2782,7 @@ func (m Model) paletteCommands() []paletteCmd {
 	}
 	cmds = append(cmds, paletteCmd{title: "show the stack's PRs and reviews", hint: m.keys.StackPopup, run: func(m Model) (tea.Model, tea.Cmd) { return m.openGhStackPopup() }})
 	cmds = append(cmds, paletteCmd{title: "collapse or expand stacks in the bar", hint: m.keys.ToggleStacks, run: func(m Model) (tea.Model, tea.Cmd) { return m.toggleStacks() }})
+	cmds = append(cmds, paletteCmd{title: "open or close the session list", hint: m.keys.SidePanel, run: func(m Model) (tea.Model, tea.Cmd) { return m.toggleSidePanel() }})
 	cmds = append(cmds, paletteCmd{title: "open home workspace", hint: m.keys.GlobalConfig, run: func(m Model) (tea.Model, tea.Cmd) { return m.activateGlobalConfig() }})
 	cmds = append(cmds, paletteCmd{title: "open orchestrator", hint: m.keys.Orchestrator, run: func(m Model) (tea.Model, tea.Cmd) { return m.openOrchestrator() }})
 	cmds = append(cmds, paletteCmd{title: "new orchestrator session", run: func(m Model) (tea.Model, tea.Cmd) { return m.resetOrchestrator() }})

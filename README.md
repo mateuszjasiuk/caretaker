@@ -130,6 +130,7 @@ prev_agent  = "f3"     # previous agent in the active worktree
 next_worktree = "ctrl+l" # next worktree in the bar, like tabs (wraps)
 prev_worktree = "ctrl+h" # previous worktree in the bar (wraps)
 toggle_stacks = "ctrl+y" # collapse or expand gh stacks in the bar
+side_panel  = "ctrl+\\" # open or close the session list on the left
 stack_popup = "ctrl+s"  # the current gh stack's PRs, reviews and checks
 global_config = "alt+g" # open the home-directory workspace
 orchestrator = "alt+o" # open the orchestrator agent (see below)
@@ -402,6 +403,12 @@ worktree shows on the right.
   deck and your latest work. You can also **click** any of the four bar icons to jump straight to
   that view (the session icons are inert until a workspace is active). Sessions keep running —
   switching never relaunches them, and they persist for ct's lifetime.
+- **`ctrl+\`** opens the **session list** on the left: the bar's open worktrees under their
+  repo and gh stack, with the same signs (`!` waiting, `✓` done, `●` working) and order, so
+  `ctrl+l`/`ctrl+h` walk it top to bottom. Click a row to open it. The list pushes the session to
+  the right (28 columns) instead of covering it, and the bar hides its strip while it shows. It
+  hides in terminals under 89 columns and on the deck. ct remembers whether it is open. When the
+  bar's strip runs out of room, its `+N` opens the list too.
 
 ### Agent providers and lifecycle
 

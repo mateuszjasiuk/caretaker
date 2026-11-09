@@ -36,11 +36,12 @@ import (
 	"github.com/KCaverly/caretaker/internal/usage"
 )
 
-// barHeight is the number of rows the top chrome occupies: the status bar, the
-// agent strip's row while it shows, and a light separator line.
+// barHeight is the number of rows the top chrome occupies: the status bar, a
+// blank row and the agent strip's row while it shows, and a light separator
+// line.
 func (m Model) barHeight() int {
 	if m.stripShown() {
-		return 3
+		return stripRow + 2
 	}
 	return 2
 }

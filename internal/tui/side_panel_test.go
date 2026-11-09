@@ -184,7 +184,7 @@ func TestSidePanelClickOpensTheSession(t *testing.T) {
 
 func TestSidePanelHidesTheAgentStrip(t *testing.T) {
 	m := stripModel(t, 140, "alpha", "beta")
-	if m.barHeight() != 3 || !strings.Contains(barStripRow(m), "alpha · beta") {
+	if m.barHeight() != 4 || !strings.Contains(barStripRow(m), "alpha · beta") {
 		t.Fatalf("with the panel closed the strip has its own row: %q", m.renderBar())
 	}
 
@@ -195,7 +195,7 @@ func TestSidePanelHidesTheAgentStrip(t *testing.T) {
 	if row := barFirstRow(m); !strings.Contains(row, "repo / beta") {
 		t.Fatalf("the bar should keep its other parts: %q", row)
 	}
-	if _, _, ok := m.stripClick(10, 1); ok {
+	if _, _, ok := m.stripClick(10, stripRow); ok {
 		t.Fatal("a hidden strip should take no clicks")
 	}
 
@@ -219,7 +219,7 @@ func TestStripMoreOpensTheSidePanel(t *testing.T) {
 		t.Fatalf("the strip's last item should be \"+N\": %+v", more)
 	}
 
-	mm, _, ok := m.stripClick(more.start, 1)
+	mm, _, ok := m.stripClick(more.start, stripRow)
 	m = mm.(Model)
 	if !ok || !m.sidePanel {
 		t.Fatal(`a click on "+N" should open the side panel`)

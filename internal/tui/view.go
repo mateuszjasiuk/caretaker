@@ -31,7 +31,10 @@ var (
 	cDim    = lipgloss.Color("#928374") // gray
 	cFaint  = lipgloss.Color("#665C54") // bg3
 	cSelBg  = lipgloss.Color("#665C54") // bg3 (strong selection)
-	cInk    = lipgloss.Color("#1D2021") // bg0_h (hard)
+	// cStackBg sits behind a gh stack in the agent strip, so you can see where
+	// it ends.
+	cStackBg = lipgloss.Color("#1F3A36") // dark aqua
+	cInk     = lipgloss.Color("#1D2021") // bg0_h (hard)
 )
 
 var (
@@ -257,7 +260,7 @@ func (m Model) renderBar() string {
 		return bar + "\n" + sep
 	}
 	strip, _ := m.agentStripLayout()
-	return bar + "\n" + strip + "\n" + sep
+	return bar + "\n\n" + strip + "\n" + sep
 }
 
 func (m Model) renderBarLeft() string {
@@ -2362,6 +2365,10 @@ type stripItem struct {
 // stripSep lines the agent strip up with the bar's icons.
 const stripSep = "  "
 
+// stripRow is the bar row that holds the agent strip, under a blank row that
+// sets it apart from the icons.
+const stripRow = 2
+
 // stripShown reports whether the agent strip has its own row under the bar: it
 // is on, the side panel isn't listing the sessions, and a worktree is open. It
 // doesn't depend on the screen, so the bar keeps its height on the deck and
@@ -2375,9 +2382,9 @@ func (m Model) stripShown() bool {
 // agents (yellow working, green ✓ done, red ! waiting, white seen but not
 // answered or highlighted, dim idle), with the current worktree underlined. With more than
 // one repo open, each repo's worktrees follow its name. A gh stack you're not in
-// shows as one item, and the stack you're in follows its name. Repo names go first
-// when space is short, then names shorten, then items are dropped and show as
-// "+N". Returns "" when the strip isn't shown or doesn't fit.
+// shows as one item, and the stack you're in follows its name. When space is
+// short, names shorten, then items are dropped and show as "+N", and only then
+// do repo names go. Returns "" when the strip isn't shown or doesn't fit.
 func (m Model) agentStripLayout() (string, []stripItem) {
 	if !m.stripShown() {
 		return "", nil
@@ -2421,28 +2428,29 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 		if sign == "!" || sign == "✓" {
 			name = sign + " " + name
 		}
-		return st.Render(name)
+		return onStack(st, g).Render(name)
 	}
 	// lead is what goes before item i: a separator, and the repo's name when
-	// item i starts a new repo. "│" also closes the stack you're in, as nothing
-	// else shows where it ends.
+	// item i starts a new repo. A gh stack keeps its background between its
+	// items; the separator before the stack stays outside it.
 	lead := func(i int, withRepo bool) string {
 		g := groups[i]
 		newRepo := i == 0 || groups[i-1].repo != g.repo || groups[i-1].account != g.account
-		stackEnds := i > 0 && inGhStack(groups[i-1]) && !sameGhStack(groups[i-1], g)
 		var s string
 		switch {
 		case i == 0:
-		case (withRepo && newRepo) || stackEnds:
+		case withRepo && newRepo:
 			s = barSep.Render(" │ ")
+		case sameGhStack(groups[i-1], g):
+			s = onStack(dimStyle, g).Render(" · ")
 		default:
 			s = dimStyle.Render(" · ")
 		}
 		if withRepo && newRepo && g.key != m.homeWSKey {
-			s += barSep.Render(truncateTo(g.repo, 16) + accountTag(g) + ": ")
+			s += repoHdrStyle.Render(truncateTo(g.repo, 16)) + barSep.Render(": ")
 		}
 		if inGhStack(g) && (i == 0 || !sameGhStack(groups[i-1], g)) {
-			s += barSep.Render(ghStackIcon + " " + truncateTo(g.stack.Name(), 16) + ": ")
+			s += onStack(dimStyle, g).Render(ghStackIcon+" "+truncateTo(g.stack.Name(), 16)) + onStack(barSep, g).Render(": ")
 		}
 		return s
 	}
@@ -2479,14 +2487,15 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 		return w
 	}
 
-	// Try with repo names, then without; each with full names, then shorter
-	// ones. Then drop items from the end.
+	// Try full names, then shorter ones, then drop items from the end. Repo
+	// names go last: without them the worktrees of different repos run
+	// together, and "+N" opens the side panel, which lists everything.
 	withRepos := []bool{false}
 	if len(repos) > 1 {
 		withRepos = []bool{true, false}
 	}
-	var texts []string
 	for _, withRepo := range withRepos {
+		var texts []string
 		for _, maxW := range []int{32, 16, 10} {
 			texts = texts[:0]
 			for _, g := range groups {
@@ -2496,10 +2505,10 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 				return build(texts, len(texts), withRepo)
 			}
 		}
-	}
-	for n := len(texts) - 1; n >= 1; n-- {
-		if width(texts, n, false) <= avail {
-			return build(texts, n, false)
+		for n := len(texts) - 1; n >= 1; n-- {
+			if width(texts, n, withRepo) <= avail {
+				return build(texts, n, withRepo)
+			}
 		}
 	}
 	return "", nil
@@ -2507,7 +2516,7 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 
 // stripClick handles a left click on the agent strip.
 func (m Model) stripClick(x, y int) (tea.Model, tea.Cmd, bool) {
-	if y != 1 {
+	if y != stripRow {
 		return m, nil, false
 	}
 	_, items := m.agentStripLayout()
@@ -2573,6 +2582,15 @@ func (m Model) stripLook(g agentGroup, idle lipgloss.Style) (sign string, signSt
 		nameSt = nameSt.Foreground(cAccent).Underline(true)
 	}
 	return sign, signSt, nameSt
+}
+
+// onStack puts st on the gh stack background when g is in a stack, shown in
+// full or collapsed into one entry.
+func onStack(st lipgloss.Style, g agentGroup) lipgloss.Style {
+	if g.stack.Index > 0 {
+		return st.Background(cStackBg)
+	}
+	return st
 }
 
 // inGhStack reports whether g is one worktree of the gh stack you're in,

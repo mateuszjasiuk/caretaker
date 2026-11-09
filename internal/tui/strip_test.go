@@ -36,6 +36,7 @@ func stripModelKeys(t *testing.T, w int, keys ...string) Model {
 	t.Cleanup(mgr.CloseAll)
 
 	m := New(ctrl, mgr)
+	m.sidePanel = false // New reads the real state file
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: 24})
 	m = mm.(Model)
 	for _, key := range keys {
@@ -56,9 +57,14 @@ func barFirstRow(m Model) string {
 	return ansi.Strip(strings.SplitN(m.renderBar(), "\n", 2)[0])
 }
 
+// barStripRow is the agent strip's own row in the bar while it shows.
+func barStripRow(m Model) string {
+	return ansi.Strip(strings.Split(m.renderBar(), "\n")[stripRow])
+}
+
 func TestAgentStripListsWorktreesByName(t *testing.T) {
 	m := stripModel(t, 120, "zeta", "alpha", "mid")
-	row := barFirstRow(m)
+	row := barStripRow(m)
 	a, z, mid := strings.Index(row, "alpha"), strings.Index(row, "zeta"), strings.Index(row, "mid")
 	if a < 0 || z < 0 || mid < 0 || !(a < mid && mid < z) {
 		t.Fatalf("strip should list worktrees by name: %q", row)
@@ -75,7 +81,7 @@ func TestAgentStripShowsAttention(t *testing.T) {
 		t.Skip("workspace started without an agent")
 	}
 	m.agentStatus = map[int]AgentStatus{ws.Agents[0].Pid(): {Status: "waiting"}}
-	if row := barFirstRow(m); !strings.Contains(row, "! alpha") {
+	if row := barStripRow(m); !strings.Contains(row, "! alpha") {
 		t.Fatalf("a waiting worktree should show \"! alpha\": %q", row)
 	}
 }
@@ -104,8 +110,8 @@ func TestAgentStripMarksCurrentWorktree(t *testing.T) {
 
 func TestAgentStripOverflow(t *testing.T) {
 	names := []string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
-	m := stripModel(t, 80, names...)
-	row := barFirstRow(m)
+	m := stripModel(t, 40, names...)
+	row := barStripRow(m)
 	if !strings.Contains(row, "+") {
 		t.Fatalf("a strip too wide for the bar should end with +N: %q", row)
 	}
@@ -126,7 +132,7 @@ func TestAgentStripClickOpensWorktree(t *testing.T) {
 	if target.end == 0 {
 		t.Fatal("strip has no alpha item")
 	}
-	mm, _ := m.handleMouseClick(tea.MouseClickMsg{X: target.start, Y: 0, Button: tea.MouseLeft})
+	mm, _ := m.handleMouseClick(tea.MouseClickMsg{X: target.start, Y: stripRow, Button: tea.MouseLeft})
 	m = mm.(Model)
 	if m.current == nil || m.current.key != "repo/alpha" {
 		t.Fatalf("clicking alpha should open it, current = %v", m.current)
@@ -160,7 +166,7 @@ func TestWorktreeKeysMoveLikeTabsAndWrap(t *testing.T) {
 }
 
 func TestWorktreeKeysReachWorktreesHiddenFromTheBar(t *testing.T) {
-	m := stripModel(t, 60, "alpha-long-worktree", "beta-long-worktree", "gamma-long-worktree", "delta-long-worktree")
+	m := stripModel(t, 40, "alpha-long-worktree", "beta-long-worktree", "gamma-long-worktree", "delta-long-worktree")
 	_, items := m.agentStripLayout()
 	if len(items) >= 4 {
 		t.Fatalf("test needs a bar too narrow for every worktree, shows %d", len(items))
@@ -221,7 +227,7 @@ func TestAgentStripOff(t *testing.T) {
 
 func TestAgentStripGroupsByRepo(t *testing.T) {
 	m := stripModelKeys(t, 140, "front/zeta", "back/alpha", "front/beta")
-	row := barFirstRow(m)
+	row := barStripRow(m)
 	want := "front: beta · zeta │ back: alpha"
 	if !strings.Contains(row, want) {
 		t.Fatalf("strip should group worktrees under their repo, want %q in %q", want, row)
@@ -229,26 +235,30 @@ func TestAgentStripGroupsByRepo(t *testing.T) {
 
 	// One repo needs no repo name.
 	m = stripModel(t, 140, "alpha", "beta")
-	if row := barFirstRow(m); strings.Contains(row, "repo:") {
+	if row := barStripRow(m); strings.Contains(row, "repo:") {
 		t.Fatalf("a single repo should not be named: %q", row)
 	}
 }
 
-func TestAgentStripDropsRepoNamesFirst(t *testing.T) {
+func TestAgentStripKeepsRepoNamesLongest(t *testing.T) {
 	m := stripModelKeys(t, 140, "front/zeta", "back/alpha", "front/beta")
-	// Narrow the bar until the repo names no longer fit.
-	row := barFirstRow(m)
-	for strings.Contains(row, "front:") && m.width > 40 {
-		m.width--
-		row = barFirstRow(m)
+	row := barStripRow(m)
+	if !strings.Contains(row, "front: beta · zeta │ back: alpha") {
+		t.Fatalf("with room, every repo shows its name: %q", row)
 	}
-	if !strings.Contains(row, "beta · zeta · alpha") {
-		t.Fatalf("repo names should go before worktree names: %q", row)
+
+	// Narrow the bar until something has to go: worktrees go before repo names.
+	for !strings.Contains(row, "+") && m.width > minViableWidth {
+		m.width--
+		row = barStripRow(m)
+	}
+	if !strings.HasPrefix(row, "  front: ") || !strings.Contains(row, "+") {
+		t.Fatalf("items should be dropped while the repo name stays: %q", row)
 	}
 }
 
 // TestAgentStripGroupsByClaudeAccount checks that an extra account's worktrees
-// come after the default account's and sit on their own background.
+// come after the default account's, under their own repo name.
 func TestAgentStripGroupsByClaudeAccount(t *testing.T) {
 	m := stripModelKeys(t, 140, "front/zeta", "home/alpha", "back/beta")
 	var homePath string
@@ -261,17 +271,8 @@ func TestAgentStripGroupsByClaudeAccount(t *testing.T) {
 		"private": {ConfigDir: t.TempDir(), Folders: []string{homePath}},
 	}
 
-	if row, want := barFirstRow(m), "front: zeta │ back: beta │ home: alpha"; !strings.Contains(row, want) {
-		t.Fatalf("the private worktree should come last, want %q in %q", want, row)
-	}
-	raw := strings.SplitN(m.renderBar(), "\n", 2)[0]
-	tint := "48;2;58;40;64" // cAccountBg as a truecolor background
-	at := strings.Index(raw, tint)
-	if at < 0 {
-		t.Fatalf("no account background in %q", raw)
-	}
-	if before := ansi.Strip(raw[:at]); strings.Contains(before, "alpha") || !strings.Contains(before, "beta") {
-		t.Fatalf("the background should start at the private block, before it: %q", before)
+	if row, want := barStripRow(m), "front: zeta │ back: beta │ home: alpha"; !strings.Contains(row, want) {
+		t.Fatalf("the private worktree should come last, under its account, want %q in %q", want, row)
 	}
 }
 
@@ -294,7 +295,7 @@ func stackStripModel(t *testing.T) Model {
 
 func TestStripCollapsesStackYouAreNotIn(t *testing.T) {
 	m := stackStripModel(t)
-	if row, want := barFirstRow(m), "⛁ #4 · beta · zed"; !strings.Contains(row, want) {
+	if row, want := barStripRow(m), "⛁ #4 · beta · zed"; !strings.Contains(row, want) {
 		t.Fatalf("want %q in %q", want, row)
 	}
 }
@@ -303,7 +304,7 @@ func TestStripExpandsTheCurrentStackInStackOrder(t *testing.T) {
 	m := stackStripModel(t)
 	mm, _ := m.activate("repo", "c", m.active[2].view.WT.Path)
 	m = mm.(Model)
-	if row, want := barFirstRow(m), "⛁ #4: a · b · c · d · beta · zed"; !strings.Contains(row, want) {
+	if row, want := barStripRow(m), "⛁ #4: a · b · c · d · beta · zed"; !strings.Contains(row, want) {
 		t.Fatalf("want %q in %q", want, row)
 	}
 }
@@ -315,7 +316,7 @@ func TestStripCollapsedStackShowsMostUrgentState(t *testing.T) {
 		t.Skip("workspace started without an agent")
 	}
 	m.agentStatus = map[int]AgentStatus{ws.Agents[0].Pid(): {Status: "waiting"}}
-	if row := barFirstRow(m); !strings.Contains(row, "! ⛁ #4") {
+	if row := barStripRow(m); !strings.Contains(row, "! ⛁ #4") {
 		t.Fatalf("a waiting worktree should mark its collapsed stack: %q", row)
 	}
 }
@@ -327,7 +328,7 @@ func TestStripUnsubmittedStackUsesFirstBranch(t *testing.T) {
 		pos.Stack = 0
 		stack[name] = pos
 	}
-	if row := barFirstRow(m); !strings.Contains(row, "⛁ a ·") {
+	if row := barStripRow(m); !strings.Contains(row, "⛁ a ·") {
 		t.Fatalf("an unsubmitted stack should show its first branch: %q", row)
 	}
 }
@@ -337,7 +338,7 @@ func TestStripStackWithOneOpenWorktreeIsPlain(t *testing.T) {
 	m.stacksExpanded = false
 	m.active[0].view.WT.Branch = "a"
 	m.ghStacks = map[string]ghstack.Stacks{"repo": {"a": {Stack: 4, Index: 1, Total: 2, Bottom: "a"}}}
-	if row := barFirstRow(m); strings.Contains(row, "⛁") || !strings.Contains(row, "a · beta") {
+	if row := barStripRow(m); strings.Contains(row, "⛁") || !strings.Contains(row, "a · beta") {
 		t.Fatalf("one open worktree needs no stack: %q", row)
 	}
 }
@@ -345,7 +346,7 @@ func TestStripStackWithOneOpenWorktreeIsPlain(t *testing.T) {
 func TestToggleStacksShowsEveryStackAndIsSaved(t *testing.T) {
 	m := stackStripModel(t)
 	m = pressCtrl(t, m, 'y')
-	if row, want := barFirstRow(m), "⛁ #4: a · b · c · d · beta · zed"; !strings.Contains(row, want) {
+	if row, want := barStripRow(m), "⛁ #4: a · b · c · d · beta · zed"; !strings.Contains(row, want) {
 		t.Fatalf("want %q in %q", want, row)
 	}
 	if !m.state.StacksExpanded {
@@ -353,7 +354,7 @@ func TestToggleStacksShowsEveryStackAndIsSaved(t *testing.T) {
 	}
 
 	m = pressCtrl(t, m, 'y')
-	if row := barFirstRow(m); !strings.Contains(row, "⛁ #4 · beta") {
+	if row := barStripRow(m); !strings.Contains(row, "⛁ #4 · beta") {
 		t.Fatalf("a second press should collapse again: %q", row)
 	}
 }
@@ -389,7 +390,7 @@ func TestClickOnCollapsedStackOpensLastUsed(t *testing.T) {
 	m.state.LastOpened["repo/b"] = 200
 
 	_, items := m.agentStripLayout()
-	mm, _ := m.handleMouseClick(tea.MouseClickMsg{X: items[0].start, Y: 0, Button: tea.MouseLeft})
+	mm, _ := m.handleMouseClick(tea.MouseClickMsg{X: items[0].start, Y: stripRow, Button: tea.MouseLeft})
 	m = mm.(Model)
 	if m.current == nil || m.current.worktree != "b" {
 		t.Fatalf("clicking the stack should open b, current = %v", m.current)
@@ -403,7 +404,7 @@ func TestStripStackSitsOnItsOwnBackground(t *testing.T) {
 	mm, _ := m.activate("repo", "c", m.active[2].view.WT.Path)
 	m = mm.(Model)
 
-	raw := strings.SplitN(m.renderBar(), "\n", 2)[0]
+	raw := strings.Split(m.renderBar(), "\n")[stripRow]
 	tint := "48;2;31;58;54" // cStackBg as a truecolor background
 	first, last := strings.Index(raw, tint), strings.LastIndex(raw, tint)
 	if first < 0 {
@@ -419,8 +420,46 @@ func TestStripStackSitsOnItsOwnBackground(t *testing.T) {
 
 	m = pressCtrl(t, m, 'l')
 	m = pressCtrl(t, m, 'l') // to beta, so the stack collapses
-	raw = strings.SplitN(m.renderBar(), "\n", 2)[0]
+	raw = strings.Split(m.renderBar(), "\n")[stripRow]
 	if at := strings.Index(raw, tint); at < 0 || !strings.Contains(ansi.Strip(raw[at:]), "⛁ #4") {
 		t.Fatalf("a collapsed stack keeps its background: %q", raw)
+	}
+}
+
+func TestAgentStripHasItsOwnRow(t *testing.T) {
+	m := stripModel(t, 90, "alpha", "beta", "a-very-long-worktree-name-for-the-label")
+
+	if row := barFirstRow(m); strings.Contains(row, "alpha") || !strings.Contains(row, "repo / a-very-long-worktree-name-for-the-label") {
+		t.Fatalf("the first row should keep the full label and no strip: %q", row)
+	}
+	rows := strings.Split(ansi.Strip(m.renderBar()), "\n")
+	if len(rows) != 4 || rows[1] != "" || rows[2] != "  a-very-long-worktree-name-for-t… · alpha · beta" {
+		t.Fatalf("the strip should have a plain row, after a blank one, before the line: %q", rows)
+	}
+	if rows[3] != strings.Repeat("─", m.width) {
+		t.Fatalf("the last row should be the separator line: %q", rows[3])
+	}
+}
+
+func TestStripRowShortensSessionsAndShiftsClicks(t *testing.T) {
+	m := stripModel(t, 140, "alpha")
+	m.screen = screenTerminal
+	if m.barHeight() != 4 {
+		t.Fatalf("bar height = %d, want 4 with the strip shown", m.barHeight())
+	}
+	if _, h := m.sessionSize(); h != m.height-4-m.sessionFooterH() {
+		t.Fatalf("session height = %d, want %d", h, m.height-4-m.sessionFooterH())
+	}
+
+	w, h := m.sessionSize()
+	if _, err := m.mgr.SplitTermPane("repo/alpha", t.TempDir(), m.ctrl.TermSpec(), session.SplitH, w, h); err != nil {
+		t.Fatal(err)
+	}
+	ws := m.current.ws
+	// The top pane's first row is screen row 4, under the icons, the blank row,
+	// the strip and the line.
+	m.handleMouseClick(tea.MouseClickMsg{X: 5, Y: 4, Button: tea.MouseLeft})
+	if ws.ActiveTerm != 0 {
+		t.Fatalf("a click on the first row under the bar should focus the top pane, active=%d", ws.ActiveTerm)
 	}
 }

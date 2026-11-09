@@ -36,9 +36,15 @@ import (
 	"github.com/KCaverly/caretaker/internal/usage"
 )
 
-// barHeight is the number of rows the top chrome occupies: the status bar and
-// a light separator line directly beneath it.
-const barHeight = 2
+// barHeight is the number of rows the top chrome occupies: the status bar, a
+// blank row and the agent strip's row while it shows, and a light separator
+// line.
+func (m Model) barHeight() int {
+	if m.stripShown() {
+		return stripRow + 2
+	}
+	return 2
+}
 
 // screen is the active view: the picker, one of the session views, or setup.
 type screen int
@@ -311,6 +317,8 @@ type Model struct {
 	agentStrip bool // list open worktrees after the bar icons
 	// stacksExpanded shows every gh stack in full in the agent strip.
 	stacksExpanded bool
+	// sidePanel is true while the session list on the left is open.
+	sidePanel bool
 	// ghPopup is the open gh stack popup, nil when closed.
 	ghPopup *ghStackPopup
 	// ghPRs is what GitHub last said about each stack's PRs, by stack.
@@ -597,6 +605,7 @@ func New(ctrl *Controller, mgr *session.Manager) Model {
 	return Model{
 		ctrl: ctrl, mgr: mgr, state: saved,
 		stacksExpanded: saved.StacksExpanded,
+		sidePanel:      saved.SidePanel,
 		keys:           ctrl.Keys(),
 		iconMode:       ctrl.DisplayIcons(),
 		agentStrip:     ctrl.AgentStrip(),
@@ -1102,7 +1111,21 @@ func (m Model) repaintCmd() tea.Cmd {
 }
 
 func (m Model) sessionSize() (int, int) {
-	return m.width, max(1, m.height-barHeight-m.sessionFooterH())
+	return m.width - m.sidePanelW(), max(1, m.height-m.barHeight()-m.sessionFooterH())
+}
+
+// resizeSessions sizes the current workspace and the orchestrator to the room
+// left for sessions.
+func (m Model) resizeSessions() {
+	// Only the current workspace is resized; background ones are brought up
+	// to date by Activate when they next become current.
+	w, h := m.sessionSize()
+	if m.current != nil {
+		m.mgr.ResizeWorkspace(m.current.key, w, h)
+	}
+	if m.screen == screenOrchestrator && m.mgr.Has(m.orchKey) {
+		m.mgr.ResizeWorkspace(m.orchKey, w, h)
+	}
 }
 
 // dismissHint retires the session help hint on the user's first keystroke into
@@ -1351,19 +1374,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.filter.SetWidth(inputW)
 		m.nameInput.SetWidth(inputW)
 		m.rootInput.SetWidth(clamp(m.width-14, 20, 52))
-		m.promptInput.MaxHeight = clamp(m.height-barHeight-10, 3, 8)
+		m.promptInput.MaxHeight = clamp(m.height-m.barHeight()-10, 3, 8)
 		m.promptInput.SetWidth(clamp(m.width-16, 20, 80))
 		m.paletteInput.SetWidth(clamp(m.width-16, 20, 52))
-		// Only the current workspace is resized; background ones are brought up
-		// to date by Activate when they next become current.
-		if m.current != nil {
-			w, h := m.sessionSize()
-			m.mgr.ResizeWorkspace(m.current.key, w, h)
-		}
-		if m.screen == screenOrchestrator && m.mgr.Has(m.orchKey) {
-			w, h := m.sessionSize()
-			m.mgr.ResizeWorkspace(m.orchKey, w, h)
-		}
+		m.resizeSessions()
 		return m, nil
 
 	case loadedMsg:
@@ -2773,6 +2787,7 @@ func (m Model) paletteCommands() []paletteCmd {
 	}
 	cmds = append(cmds, paletteCmd{title: "show the stack's PRs and reviews", hint: m.keys.StackPopup, run: func(m Model) (tea.Model, tea.Cmd) { return m.openGhStackPopup() }})
 	cmds = append(cmds, paletteCmd{title: "collapse or expand stacks in the bar", hint: m.keys.ToggleStacks, run: func(m Model) (tea.Model, tea.Cmd) { return m.toggleStacks() }})
+	cmds = append(cmds, paletteCmd{title: "open or close the session list", hint: m.keys.SidePanel, run: func(m Model) (tea.Model, tea.Cmd) { return m.toggleSidePanel() }})
 	cmds = append(cmds, paletteCmd{title: "open home workspace", hint: m.keys.GlobalConfig, run: func(m Model) (tea.Model, tea.Cmd) { return m.activateGlobalConfig() }})
 	cmds = append(cmds, paletteCmd{title: "open orchestrator", hint: m.keys.Orchestrator, run: func(m Model) (tea.Model, tea.Cmd) { return m.openOrchestrator() }})
 	cmds = append(cmds, paletteCmd{title: "new orchestrator session", run: func(m Model) (tea.Model, tea.Cmd) { return m.resetOrchestrator() }})
@@ -3635,6 +3650,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.rotateWorktree(-1)
 		case m.keys.ToggleStacks:
 			return m.toggleStacks()
+		case m.keys.SidePanel:
+			return m.toggleSidePanel()
 		case m.keys.StackPopup:
 			return m.openGhStackPopup()
 		}
@@ -3760,7 +3777,7 @@ func (m Model) isReservedActionKey(s string) bool {
 	switch s {
 	case m.keys.Cycle, m.keys.CycleBack, m.keys.Picker, m.keys.Palette,
 		m.keys.Attention, m.keys.Highlight, m.keys.GlobalConfig, m.keys.Orchestrator, m.keys.NextAgent, m.keys.PrevAgent,
-		m.keys.NextWorktree, m.keys.PrevWorktree, m.keys.ToggleStacks, m.keys.StackPopup,
+		m.keys.NextWorktree, m.keys.PrevWorktree, m.keys.ToggleStacks, m.keys.SidePanel, m.keys.StackPopup,
 		m.keys.CommandPalette, m.keys.GotoEditor, m.keys.GotoAgent, m.keys.GotoTerm:
 		return true
 	}
@@ -4124,6 +4141,9 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		if mm, cmd, ok := m.stripClick(mo.X, mo.Y); ok {
 			return mm, cmd
 		}
+		if mm, cmd, ok := m.sidePanelClick(mo.X, mo.Y); ok {
+			return mm, cmd
+		}
 		if m.screen == screenPicker && !m.helpOpen && !m.paletteOpen && !m.diffOpen && !m.stackOpen && m.ghPopup == nil {
 			if mm, cmd, ok := m.deckClick(mo.X, mo.Y); ok {
 				return mm, cmd
@@ -4133,9 +4153,10 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		// program running in it. Panes aren't drawn while an overlay is up, so a
 		// click then must not steal pane focus.
 		if m.screen == screenTerminal && m.current != nil &&
-			!m.helpOpen && !m.boardOpen && !m.usageOpen && !m.paletteOpen && !m.diffOpen && mo.Y >= barHeight {
+			!m.helpOpen && !m.boardOpen && !m.usageOpen && !m.paletteOpen && !m.diffOpen && mo.Y >= m.barHeight() &&
+			mo.X >= m.sidePanelW() {
 			w, h := m.sessionSize()
-			m.mgr.FocusTermPaneAt(m.current.key, mo.X, mo.Y-barHeight, w, h)
+			m.mgr.FocusTermPaneAt(m.current.key, mo.X-m.sidePanelW(), mo.Y-m.barHeight(), w, h)
 		}
 	}
 	m.forwardMouse(msg)
@@ -4157,8 +4178,8 @@ func (m Model) deckWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	by := mo.Y - barHeight
-	L := m.deckLayout(m.height - barHeight)
+	by := mo.Y - m.barHeight()
+	L := m.deckLayout(m.height - m.barHeight())
 	switch {
 	case by >= 1 && by < 1+L.newContentH: // NEW box
 		var cmd tea.Cmd
@@ -4182,7 +4203,7 @@ func (m Model) deckWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 // already-selected row activates it — opening a worktree or starting the create
 // flow, mirroring enter. handled is false when the click misses every row.
 func (m Model) deckClick(x, y int) (tea.Model, tea.Cmd, bool) {
-	by := y - barHeight // body-relative row (bar + separator sit above)
+	by := y - m.barHeight() // body-relative row (bar + separator sit above)
 	if by < 0 {
 		return m, nil, false
 	}
@@ -4191,7 +4212,7 @@ func (m Model) deckClick(x, y int) (tea.Model, tea.Cmd, bool) {
 	if x >= m.width-m.plasmaWidth() {
 		return m, nil, false
 	}
-	L := m.deckLayout(m.height - barHeight)
+	L := m.deckLayout(m.height - m.barHeight())
 
 	// NEW box: content rows are body [1, 1+newContentH); the repo list begins at
 	// content line 4 (header, blank, input, blank).
@@ -4295,19 +4316,36 @@ func (m Model) forwardMouse(msg tea.MouseMsg) {
 		return
 	}
 	mo := msg.Mouse()
-	if mo.Y < barHeight {
+	pw := m.sidePanelW()
+	if mo.Y < m.barHeight() {
 		return
 	}
+	// Clicks and the wheel over the side panel stay out of the session. A drag
+	// that leaves the session over the panel still gets its motion and release,
+	// at the panel's edge, or the program would think the button is still down.
+	if mo.X < pw {
+		switch msg.(type) {
+		case tea.MouseClickMsg, tea.MouseWheelMsg:
+			return
+		case tea.MouseMotionMsg:
+			if mo.Button == tea.MouseNone {
+				return
+			}
+		}
+		mo.X = pw
+	}
 	// Target session and the pane origin to subtract from the pointer. Default:
-	// the active session, offset only by the bar (bx, by stay 0).
+	// the active session, offset only by the bar and the side panel (bx, by
+	// stay 0).
 	s := m.activeSession()
+	px := mo.X - pw
 	bx, by := 0, 0
 	if m.screen == screenTerminal && m.current != nil && m.current.ws != nil {
 		ws := m.current.ws
 		if !ws.TermZoomed && len(ws.Terms) > 1 && ws.TermLayout != nil {
 			w, h := m.sessionSize()
 			bounds := session.ComputePaneBounds(ws.TermLayout, 0, 0, w, h)
-			idx := session.PaneAt(bounds, mo.X, mo.Y-barHeight)
+			idx := session.PaneAt(bounds, px, mo.Y-m.barHeight())
 			if idx < 0 || idx >= len(ws.Terms) || ws.Terms[idx] == nil {
 				return // divider, footer, or outside every pane
 			}
@@ -4324,13 +4362,13 @@ func (m Model) forwardMouse(msg tea.MouseMsg) {
 		return
 	}
 	shift := func(p tea.Mouse) uv.Mouse {
-		return uv.Mouse{X: p.X - bx, Y: p.Y - barHeight - by, Button: p.Button, Mod: uv.KeyMod(p.Mod)}
+		return uv.Mouse{X: p.X - pw - bx, Y: p.Y - m.barHeight() - by, Button: p.Button, Mod: uv.KeyMod(p.Mod)}
 	}
 	switch e := msg.(type) {
 	case tea.MouseClickMsg:
-		s.SendMouse(uv.MouseClickEvent(shift(e.Mouse())))
+		s.SendMouse(uv.MouseClickEvent(shift(mo)))
 	case tea.MouseReleaseMsg:
-		s.SendMouse(uv.MouseReleaseEvent(shift(e.Mouse())))
+		s.SendMouse(uv.MouseReleaseEvent(shift(mo)))
 	case tea.MouseWheelMsg:
 		if normalizedProvider(s.Provider) == agent.Codex && m.codexTranscript[s] {
 			if seq, ok := codexTranscriptWheel(e.Mouse().Button); ok {
@@ -4346,9 +4384,9 @@ func (m Model) forwardMouse(msg tea.MouseMsg) {
 		if m.screen == screenTerminal && m.scrollTermPaneWheel(s, e.Mouse().Button == tea.MouseWheelUp) {
 			return
 		}
-		s.SendMouse(uv.MouseWheelEvent(shift(e.Mouse())))
+		s.SendMouse(uv.MouseWheelEvent(shift(mo)))
 	case tea.MouseMotionMsg:
-		s.SendMouse(uv.MouseMotionEvent(shift(e.Mouse())))
+		s.SendMouse(uv.MouseMotionEvent(shift(mo)))
 	}
 }
 
@@ -5211,7 +5249,7 @@ const diffChromeRows = 3
 // kept in step with renderDiff's own budget so scroll clamping and rendering
 // agree on the window size.
 func (m Model) diffBodyHeight() int {
-	return max(1, m.height-barHeight-diffChromeRows)
+	return max(1, m.height-m.barHeight()-diffChromeRows)
 }
 
 // handleDiff routes key events while the diff viewer is open: esc/q close it,

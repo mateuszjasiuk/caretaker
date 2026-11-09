@@ -42,11 +42,11 @@ func TestDeckPlasmaPanelLayout(t *testing.T) {
 
 	// Three box frames: NEW and ACTIVE on the left, the panel on the right —
 	// and on screen the NEW and panel frames share the top row.
-	if deck := m.renderDeck(m.height - barHeight); strings.Count(deck, "╭") != 3 {
+	if deck := m.renderDeck(m.height - m.barHeight()); strings.Count(deck, "╭") != 3 {
 		t.Errorf("wide deck should draw three boxes:\n%s", deck)
 	}
 	screen := screenText(t, m)
-	top := strings.Split(screen, "\n")[barHeight]
+	top := strings.Split(screen, "\n")[m.barHeight()]
 	if strings.Count(top, "╭") != 2 || strings.Count(top, "╮") != 2 {
 		t.Errorf("deck top row should show two box frames side by side, got:\n%s", top)
 	}
@@ -56,18 +56,18 @@ func TestDeckPlasmaPanelLayout(t *testing.T) {
 	if got := m.plasmaWidth(); got != 0 {
 		t.Fatalf("plasmaWidth at 70 cols = %d, want 0 (lists keep priority)", got)
 	}
-	if deck := m.renderDeck(m.height - barHeight); strings.Count(deck, "╭") != 2 {
+	if deck := m.renderDeck(m.height - m.barHeight()); strings.Count(deck, "╭") != 2 {
 		t.Errorf("narrow deck should draw only the two list boxes:\n%s", deck)
 	}
 }
 
 func TestDeckPlasmaPanelClicksSelectNothing(t *testing.T) {
 	m := plasmaModel(t, 100, 30)
-	L := m.deckLayout(m.height - barHeight)
+	L := m.deckLayout(m.height - m.barHeight())
 	// First worktree row in ACTIVE: content lines run header, blank, then the
 	// display window, whose first row is the repo header — the worktree sits
 	// one below it.
-	y := barHeight + L.newOuterH + 1 + 3
+	y := m.barHeight() + L.newOuterH + 1 + 3
 
 	// A click on that row inside the left column selects the worktree…
 	mm, _, handled := m.deckClick(4, y)

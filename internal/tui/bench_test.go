@@ -213,7 +213,7 @@ func BenchmarkViewBarOnlyFrame(b *testing.B) {
 			`printf '\033[33mlorem\033[0m \033[1;34mipsum\033[0m dolor sit amet %d\r\n' $i; ` +
 			`i=$((i+1)); done; sleep 60`}
 	ws, err := m.mgr.Activate("r/w", dir,
-		[]session.Spec{{Kind: session.Editor, Argv: fill}}, m.width, m.height-barHeight)
+		[]session.Spec{{Kind: session.Editor, Argv: fill}}, m.width, m.height-m.barHeight())
 	if err != nil {
 		b.Fatal(err)
 	}

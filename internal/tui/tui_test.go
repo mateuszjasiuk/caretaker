@@ -306,10 +306,10 @@ func TestPickerKeyJumpsToRecent(t *testing.T) {
 func TestDeckClickNewSection(t *testing.T) {
 	m := sampleModel() // 72x24, focus defaults to focusNew
 
-	L := m.deckLayout(m.height - barHeight)
+	L := m.deckLayout(m.height - m.barHeight())
 	nStart, _ := windowBounds(len(m.repoMatches), m.newCursor, L.newRows)
 	// Repo list begins at content line 4 of the NEW box (body row 1+4).
-	yRepo := func(idx int) int { return barHeight + 1 + 4 + (idx - nStart) }
+	yRepo := func(idx int) int { return m.barHeight() + 1 + 4 + (idx - nStart) }
 
 	if m.repoMatches[1].Name != "api" {
 		t.Fatalf("expected api as repo index 1, got %q", m.repoMatches[1].Name)
@@ -330,11 +330,11 @@ func TestDeckClickNewSection(t *testing.T) {
 func TestDeckClickActiveSection(t *testing.T) {
 	m := sampleModel() // focus starts on NEW
 
-	L := m.deckLayout(m.height - barHeight)
+	L := m.deckLayout(m.height - m.barHeight())
 	_, rowItem := m.activeDisplay(m.width - 4)
 	start, _ := activeWindowStart(rowItem, m.activeCursor, L.activeRows)
 	// Worktree rows begin at content line 2 of the ACTIVE box.
-	yRow := func(di int) int { return barHeight + L.newOuterH + 1 + 2 + (di - start) }
+	yRow := func(di int) int { return m.barHeight() + L.newOuterH + 1 + 2 + (di - start) }
 
 	// rowItem = [-1 caretaker, 0 feat-login, 1 bugfix, -1 api, 2 spike].
 	mm, _, ok := m.deckClick(5, yRow(1))
@@ -366,14 +366,14 @@ func TestDeckClickDetailLineMisses(t *testing.T) {
 	m.active[1].view.Ahead = 2
 	m.active[1].view.Subject = "Add login flow"
 
-	L := m.deckLayout(m.height - barHeight)
+	L := m.deckLayout(m.height - m.barHeight())
 	display, rowItem := m.activeDisplay(m.width - 4)
 	start, _ := activeWindowStart(rowItem, m.activeCursor, L.activeRows)
 	// display = [caretaker(-1), (main)(0), feat-login(1), └ detail(-1), bugfix(2), api(-1), (main)(3), spike(4)].
 	if len(rowItem) != 8 || rowItem[3] != -1 || !strings.Contains(display[3], "└") {
 		t.Fatalf("expected the detail line at display index 3 with rowItem -1, got %v", rowItem)
 	}
-	yRow := func(di int) int { return barHeight + L.newOuterH + 1 + 2 + (di - start) }
+	yRow := func(di int) int { return m.barHeight() + L.newOuterH + 1 + 2 + (di - start) }
 
 	// A click on the detail line is a miss: unhandled, cursor and focus intact.
 	mm, _, ok := m.deckClick(5, yRow(3))
@@ -414,11 +414,11 @@ func TestDeckClickOpensSelectedWorktree(t *testing.T) {
 	m.recomputeActive()
 	m.focus, m.activeCursor = focusActive, 0
 
-	L := m.deckLayout(m.height - barHeight)
+	L := m.deckLayout(m.height - m.barHeight())
 	_, rowItem := m.activeDisplay(m.width - 4)
 	start, _ := activeWindowStart(rowItem, m.activeCursor, L.activeRows)
 	// display = [repo header(-1), wt(0)] → the worktree sits at display index 1.
-	y := barHeight + L.newOuterH + 1 + 2 + (1 - start)
+	y := m.barHeight() + L.newOuterH + 1 + 2 + (1 - start)
 
 	mm, _, ok := m.deckClick(5, y) // already-selected row → open
 	m = mm.(Model)
@@ -876,7 +876,7 @@ func TestBoardFormProviderChoiceAndDefaultReset(t *testing.T) {
 	m.current = &workspaceRef{key: "r/w", path: t.TempDir(), ws: &session.Workspace{}}
 	m = m.openNewAgentForm().(Model)
 	if m.formProvider != agent.Codex || m.promptInput.Placeholder != "" ||
-		!strings.Contains(m.renderBoard(m.height-barHeight), "What should Codex do?") {
+		!strings.Contains(m.renderBoard(m.height-m.barHeight()), "What should Codex do?") {
 		t.Fatalf("default provider form state = %q / %q", m.formProvider, m.promptInput.Placeholder)
 	}
 
@@ -889,7 +889,7 @@ func TestBoardFormProviderChoiceAndDefaultReset(t *testing.T) {
 	mm, _ = m.handleBoardForm(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
 	m = mm.(Model)
 	if m.formProvider != agent.Claude || m.promptInput.Placeholder != "" ||
-		!strings.Contains(m.renderBoard(m.height-barHeight), "What should Claude do?") {
+		!strings.Contains(m.renderBoard(m.height-m.barHeight()), "What should Claude do?") {
 		t.Fatalf("toggled provider form state = %q / %q", m.formProvider, m.promptInput.Placeholder)
 	}
 
@@ -2087,7 +2087,7 @@ func TestMouseClickFocusesTermPane(t *testing.T) {
 	}
 
 	// A left click well left of the divider, below the bar, focuses pane 0.
-	m.handleMouseClick(tea.MouseClickMsg{X: 5, Y: barHeight + 3, Button: tea.MouseLeft})
+	m.handleMouseClick(tea.MouseClickMsg{X: 5, Y: m.barHeight() + 3, Button: tea.MouseLeft})
 	if ws.ActiveTerm != 0 {
 		t.Fatalf("click in left pane should focus 0, got %d", ws.ActiveTerm)
 	}
@@ -2134,7 +2134,7 @@ func TestCloseTermPaneGuardsForegroundProcess(t *testing.T) {
 	if cmd != nil || m.mode != modeConfirmTermClose || m.confirm.cursor != 0 {
 		t.Fatal("busy terminal pane should open the confirmation on cancel")
 	}
-	if out := m.renderConfirm(m.height - barHeight); !strings.Contains(out, "CLOSE TERMINAL PANE") ||
+	if out := m.renderConfirm(m.height - m.barHeight()); !strings.Contains(out, "CLOSE TERMINAL PANE") ||
 		!strings.Contains(out, "active foreground process") || !strings.Contains(out, "close pane and stop process") {
 		t.Errorf("terminal close confirmation should name the consequence:\n%s", out)
 	}
@@ -2309,8 +2309,8 @@ func TestSessionHelpHint(t *testing.T) {
 	if got := m.sessionFooterH(); got != 2 {
 		t.Fatalf("fresh session should reserve two hint rows, got %d", got)
 	}
-	if _, h := m.sessionSize(); h != m.height-barHeight-2 {
-		t.Errorf("session height should drop the hint rows, got %d want %d", h, m.height-barHeight-2)
+	if _, h := m.sessionSize(); h != m.height-m.barHeight()-2 {
+		t.Errorf("session height should drop the hint rows, got %d want %d", h, m.height-m.barHeight()-2)
 	}
 
 	// On the terminal screen it leads with the help key and surfaces panelling.
@@ -2332,8 +2332,8 @@ func TestSessionHelpHint(t *testing.T) {
 	if got := m2.sessionFooterH(); got != 0 {
 		t.Errorf("dismissed hint should reserve no rows, got %d", got)
 	}
-	if _, h := m2.sessionSize(); h != m2.height-barHeight {
-		t.Errorf("session should reclaim the row after dismiss, got %d want %d", h, m2.height-barHeight)
+	if _, h := m2.sessionSize(); h != m2.height-m.barHeight() {
+		t.Errorf("session should reclaim the row after dismiss, got %d want %d", h, m2.height-m.barHeight())
 	}
 	if got := m2.appendSessionFooter(body); got != body {
 		t.Errorf("dismissed hint should append nothing, got %q", got)
@@ -2890,7 +2890,7 @@ func TestConfirmPanelRender(t *testing.T) {
 	mm, _ := m.handleActiveKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	m = mm.(Model)
 
-	out := renderToTerminal(t, m.renderConfirm(m.height-barHeight), m.width, m.height-barHeight)
+	out := renderToTerminal(t, m.renderConfirm(m.height-m.barHeight()), m.width, m.height-m.barHeight())
 	for _, want := range []string{
 		"REMOVE WORKTREE",                   // header title
 		"r / dirtywt",                       // repo / worktree context
@@ -3275,7 +3275,7 @@ func TestDiffMsgRendersAndStaleDropped(t *testing.T) {
 	if len(m.diffView.full.lines) == 0 {
 		t.Fatal("content should be built on diffMsg arrival")
 	}
-	out := m.renderDiff(m.height - barHeight)
+	out := m.renderDiff(m.height - m.barHeight())
 	for _, want := range []string{"vs main", "main.go", "[all]", "scroll"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered diff missing %q:\n%s", want, out)
@@ -3380,7 +3380,7 @@ func TestDiffScopeToggleResetsOffset(t *testing.T) {
 	if len(m.diffView.uncommitted.lines) >= len(m.diffView.full.lines) {
 		t.Error("the uncommitted scope should be a subset of the full scope")
 	}
-	out := m.renderDiff(m.height - barHeight)
+	out := m.renderDiff(m.height - m.barHeight())
 	if !strings.Contains(out, "[uncommitted]") || !strings.Contains(out, "wip.go") {
 		t.Errorf("uncommitted scope render missing content:\n%s", out)
 	}
@@ -3575,7 +3575,7 @@ func TestDiffViewersAgreeOnFileJumps(t *testing.T) {
 	// And the footer names the same spelling the stack preview does, rather than
 	// each surface teaching a different key for one action.
 	m := openSampleDiff(t, 0, stat, nil, body, "", nil, false)
-	deck := ansi.Strip(m.renderDiff(m.height - barHeight))
+	deck := ansi.Strip(m.renderDiff(m.height - m.barHeight()))
 	if !strings.Contains(deck, "] / [") {
 		t.Errorf("the deck viewer should advertise ] / [ for file jumps:\n%s", deck)
 	}
@@ -3589,7 +3589,7 @@ func TestDiffViewersAgreeOnFileJumps(t *testing.T) {
 	sm.stackView.splitFocus = paneDiff
 	sm.applyStackCommitDiff(stackCommitDiffMsg{
 		key: key, sha: "aaa111", body: splitCommitDiff, stat: splitCommitStat()})
-	preview := ansi.Strip(sm.renderStackSplit(*sm.stackView.status, 0, sm.height-barHeight))
+	preview := ansi.Strip(sm.renderStackSplit(*sm.stackView.status, 0, sm.height-m.barHeight()))
 	if !strings.Contains(preview, "] / [") {
 		t.Errorf("the stack preview should advertise the same spelling:\n%s", preview)
 	}

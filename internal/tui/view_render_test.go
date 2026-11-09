@@ -52,7 +52,7 @@ func screenText(t *testing.T, m Model) string {
 // barLine renders just the status bar row through the terminal emulator.
 func barLine(t *testing.T, m Model) string {
 	t.Helper()
-	return strings.Split(renderToTerminal(t, m.renderBar(), m.width, barHeight), "\n")[0]
+	return strings.Split(renderToTerminal(t, m.renderBar(), m.width, m.barHeight()), "\n")[0]
 }
 
 func assertFrameFits(t *testing.T, m Model) {
@@ -432,10 +432,10 @@ func TestDeckLoadingState(t *testing.T) {
 
 func TestDeckWheelScrolls(t *testing.T) {
 	m := sampleModel()
-	L := m.deckLayout(m.height - barHeight)
+	L := m.deckLayout(m.height - m.barHeight())
 
 	// Wheel-down over the ACTIVE box moves its cursor and focuses the section.
-	y := barHeight + L.newOuterH + 1 + 2 // first worktree row
+	y := m.barHeight() + L.newOuterH + 1 + 2 // first worktree row
 	mm, _ := m.update(tea.MouseWheelMsg{X: 4, Y: y, Button: tea.MouseWheelDown})
 	m = mm.(Model)
 	if m.focus != focusActive || m.activeCursor != 1 {
@@ -452,7 +452,7 @@ func TestDeckWheelScrolls(t *testing.T) {
 	}
 
 	// Wheel over the NEW box switches focus there and moves the repo cursor.
-	mm, _ = m.update(tea.MouseWheelMsg{X: 4, Y: barHeight + 4, Button: tea.MouseWheelDown})
+	mm, _ = m.update(tea.MouseWheelMsg{X: 4, Y: m.barHeight() + 4, Button: tea.MouseWheelDown})
 	m = mm.(Model)
 	if m.focus != focusNew || m.newCursor != 1 {
 		t.Fatalf("wheel over NEW: focus=%v cursor=%d, want focusNew/1", m.focus, m.newCursor)
@@ -603,7 +603,7 @@ func TestCodexOnlyExposesCodexUsage(t *testing.T) {
 	if bar := barLine(t, m); !strings.Contains(bar, "72%") {
 		t.Errorf("Codex-only bar should show Codex usage:\n%s", bar)
 	}
-	if out := renderToTerminal(t, m.renderUsage(m.height-barHeight), m.width, m.height-barHeight); !strings.Contains(out, "Codex") || strings.Contains(out, "Claude") {
+	if out := renderToTerminal(t, m.renderUsage(m.height-m.barHeight()), m.width, m.height-m.barHeight()); !strings.Contains(out, "Codex") || strings.Contains(out, "Claude") {
 		t.Errorf("Codex-only panel should show only Codex usage:\n%s", out)
 	}
 	if help := renderAllHelp(m); !strings.Contains(help, "usage limits") {
@@ -661,7 +661,7 @@ func TestUsageOverlayRows(t *testing.T) {
 		{at: now, util: 68},
 	}
 
-	out := renderToTerminal(t, m.renderUsage(m.height-barHeight), m.width, m.height-barHeight)
+	out := renderToTerminal(t, m.renderUsage(m.height-m.barHeight()), m.width, m.height-m.barHeight())
 	for _, want := range []string{"USAGE", "session", "68%", "week", "84%", "resets", "%/hr", "at this pace", "esc"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("overlay missing %q:\n%s", want, out)
@@ -675,7 +675,7 @@ func TestUsageOverlayRows(t *testing.T) {
 	// Only the five-hour window present: week vanishes too.
 	m.usageSnap.SevenDay = nil
 	m.usageHist = nil
-	out = renderToTerminal(t, m.renderUsage(m.height-barHeight), m.width, m.height-barHeight)
+	out = renderToTerminal(t, m.renderUsage(m.height-m.barHeight()), m.width, m.height-m.barHeight())
 	if strings.Contains(out, "week") {
 		t.Errorf("overlay should skip the absent week window:\n%s", out)
 	}
@@ -683,7 +683,7 @@ func TestUsageOverlayRows(t *testing.T) {
 	// Before any snapshot has ever arrived the overlay says so.
 	empty := modelWithAgents(1)
 	empty.screen = screenAgent
-	out = renderToTerminal(t, empty.renderUsage(empty.height-barHeight), empty.width, empty.height-barHeight)
+	out = renderToTerminal(t, empty.renderUsage(empty.height-m.barHeight()), empty.width, empty.height-m.barHeight())
 	if !strings.Contains(out, "no usage data") {
 		t.Errorf("overlay should report missing data before the first poll:\n%s", out)
 	}
@@ -695,7 +695,7 @@ func TestUsageOverlayIncludesEveryEnabledProvider(t *testing.T) {
 	m.codexUsageSnap = codexUsageSnapshot(31, 55)
 	m.codexUsageHave = true
 
-	out := renderToTerminal(t, m.renderUsage(m.height-barHeight), m.width, m.height-barHeight)
+	out := renderToTerminal(t, m.renderUsage(m.height-m.barHeight()), m.width, m.height-m.barHeight())
 	for _, want := range []string{"Claude", "Codex", "68%", "84%", "31%", "55%"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("multi-provider overlay missing %q:\n%s", want, out)

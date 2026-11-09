@@ -1010,7 +1010,7 @@ func (m Model) handleStackDiffPane(msg tea.KeyPressMsg, n int) (tea.Model, tea.C
 		sha = r.diffKey()
 	}
 	cd := sv.diffCache[sha]
-	avail := max(1, (m.height-barHeight)-3)
+	avail := max(1, (m.height-m.barHeight())-3)
 	maxOff := max(0, len(cd.scope.lines)-avail)
 	setOff := func(o int) {
 		if m.stackView.diffCache == nil {
@@ -1075,7 +1075,7 @@ func (m Model) stackDiffWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	avail := max(1, (m.height-barHeight)-3)
+	avail := max(1, (m.height-m.barHeight())-3)
 	maxOff := max(0, len(cd.scope.lines)-avail)
 	cd.offset = clamp(cd.offset+delta, 0, maxOff)
 	m.stackView.diffCache[sha] = cd
@@ -1129,7 +1129,7 @@ const stackMaxBodyRows = 18
 // stackViewport is the number of scrollable body rows the overlay shows, shared
 // by the render window and the key handler's scroll clamp so they agree.
 func (m Model) stackViewport() int {
-	budget := max(3, m.height-barHeight-stackChromeRows)
+	budget := max(3, m.height-m.barHeight()-stackChromeRows)
 	return min(budget, stackMaxBodyRows)
 }
 
@@ -1207,7 +1207,7 @@ func (m Model) renderStackStatus(st stack.StackStatus, cursor, h int) string {
 		rows = append(rows, trunc(dimStyle.Render("(no commits ahead of main)")))
 	} else {
 		chrome := 6
-		budget := clamp(m.height-barHeight-chrome, 1, stackMaxBodyRows)
+		budget := clamp(m.height-m.barHeight()-chrome, 1, stackMaxBodyRows)
 		listH := min(len(list), budget)
 		start, end := windowBounds(len(list), cursor, listH)
 		for i := start; i < end; i++ {

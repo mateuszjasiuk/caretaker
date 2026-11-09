@@ -27,14 +27,12 @@ var (
 	cYellow = lipgloss.Color("#FABD2F") // bright yellow
 	cRed    = lipgloss.Color("#FB4934") // bright red
 	cFg     = lipgloss.Color("#EBDBB2") // fg1
+	cFg3    = lipgloss.Color("#BDAE93") // fg3
 	cDim    = lipgloss.Color("#928374") // gray
 	cFaint  = lipgloss.Color("#665C54") // bg3
 	cSelBg  = lipgloss.Color("#665C54") // bg3 (strong selection)
-	// cAccountBg sits behind the agent strip's worktrees of an extra Claude
-	// account: quieter than a selection, but enough to read them as a block.
-	cAccountBg = lipgloss.Color("#3A2840") // dark purple
 	// cStackBg sits behind a gh stack in the agent strip, so you can see where
-	// it ends. It wins over cAccountBg inside an extra account's block.
+	// it ends.
 	cStackBg = lipgloss.Color("#1F3A36") // dark aqua
 	cInk     = lipgloss.Color("#1D2021") // bg0_h (hard)
 )
@@ -115,38 +113,42 @@ func (m Model) View() tea.View {
 	var cursor *tea.Cursor
 	switch {
 	case m.screen == screenSetup:
-		body = m.renderSetup(h - barHeight)
+		body = m.renderSetup(h - m.barHeight())
 	case m.helpOpen:
-		body = m.renderHelp(h - barHeight)
+		body = m.renderHelp(h - m.barHeight())
 	case m.paletteOpen:
-		body = m.renderPalette(h - barHeight)
+		body = m.renderPalette(h - m.barHeight())
 	case m.confirmActive():
 		// Confirmations can originate from either the deck or the agent board;
 		// render them above their originating surface in both cases.
-		body = m.renderConfirm(h - barHeight)
+		body = m.renderConfirm(h - m.barHeight())
 	case m.boardOpen:
-		body = m.renderBoard(h - barHeight)
+		body = m.renderBoard(h - m.barHeight())
 	case m.usageOpen:
-		body = m.renderUsage(h - barHeight)
+		body = m.renderUsage(h - m.barHeight())
 	case m.diffOpen:
-		body = m.renderDiff(h - barHeight)
+		body = m.renderDiff(h - m.barHeight())
 	case m.stackOpen:
-		body = m.renderStack(h - barHeight)
+		body = m.renderStack(h - m.barHeight())
 	case m.ghPopup != nil:
-		body = m.renderGhStackPopup(h - barHeight)
+		body = m.renderGhStackPopup(h - m.barHeight())
 	case m.screen == screenPicker:
-		body = m.renderDeck(h - barHeight)
+		body = m.renderDeck(h - m.barHeight())
 	case m.screen == screenTerminal && m.current != nil && m.current.ws != nil:
-		body, cursor = m.renderTermPanes(w, h-barHeight-m.sessionFooterH())
+		sw, sh := m.sessionSize()
+		body, cursor = m.renderTermPanes(sw, sh)
 		body = m.appendSessionFooter(body)
 	default:
 		if s := m.activeSession(); s != nil {
 			body = s.Render()
 			if x, y, visible := s.Cursor(); visible {
-				cursor = tea.NewCursor(x, y+barHeight)
+				cursor = tea.NewCursor(x, y+m.barHeight())
 			}
 			body = m.appendSessionFooter(body)
 		}
+	}
+	if m.sidePanelShown() {
+		body, cursor = m.withSidePanel(body, cursor)
 	}
 
 	v := tea.NewView(chrome + "\n" + body)
@@ -237,9 +239,9 @@ const (
 	iconZoomOut = "\U000F0615" // md-arrow-collapse (U+F0615) — restore the split layout
 )
 
-// renderBar draws the pinned status bar plus a light separator directly
-// beneath it (barHeight rows total). The four left icons (caretaker, nvim,
-// claude, term) are bold Nerd Font glyphs evenly spaced: the caretaker is a
+// renderBar draws the pinned status bar, the agent strip's row while it shows,
+// and a light separator line (barHeight rows total). The four left icons
+// (caretaker, nvim, claude, term) are bold Nerd Font glyphs evenly spaced: the caretaker is a
 // stable seedling, lit yellow while the deck is active and dim once you drop
 // into a session; the session icons glow in their own colour when active and
 // dim otherwise (faint until a workspace exists). Agent attention lives in the
@@ -250,13 +252,15 @@ func (m Model) renderBar() string {
 	// Right side: notification zone (! N  ✓ N) then the workspace context. Its
 	// layout (and the click targets within it) is derived once by barRightZones.
 	right := m.barRightZones().text
-	strip, _ := m.agentStripLayout()
-	left += strip
-
 	gap := max(1, m.width-lipgloss.Width(left)-lipgloss.Width(right))
 	bar := ansi.Truncate(left+strings.Repeat(" ", gap)+right, m.width, "")
+
 	sep := barSep.Render(strings.Repeat("─", max(1, m.width)))
-	return bar + "\n" + sep
+	if !m.stripShown() {
+		return bar + "\n" + sep
+	}
+	strip, _ := m.agentStripLayout()
+	return bar + "\n\n" + strip + "\n" + sep
 }
 
 func (m Model) renderBarLeft() string {
@@ -1285,7 +1289,7 @@ func truncateTo(s string, w int) string {
 
 // deckLayout captures the deck's vertical geometry, shared by renderDeck (to
 // draw) and deckClick (to hit-test) so the two can never drift apart. bodyH is
-// the row count beneath the bar (m.height - barHeight).
+// the row count beneath the bar (m.height - m.barHeight()).
 type deckLayout struct {
 	newOuterH      int // rows in the NEW box, border included
 	newContentH    int // inner rows of the NEW box
@@ -1838,6 +1842,7 @@ func (m Model) renderHelp(h int) string {
 		row(m.keys.PrevAgent+" / "+m.keys.NextAgent, "prev / next agent"),
 		row(m.keys.PrevWorktree+" / "+m.keys.NextWorktree, "prev / next worktree"),
 		row(m.keys.ToggleStacks, "collapse or expand stacks in the bar"),
+		row(m.keys.SidePanel, "session list on the left (toggle)"),
 		row(m.keys.StackPopup, "the stack's PRs, reviews and checks"),
 	)
 	if m.usageEnabled() {
@@ -2055,9 +2060,10 @@ func (m Model) sessionFooter() string {
 		hints = append([]string{keyhint(m.keys.Back, "return")}, hints...)
 	}
 	sep := helpStyle.Render("  ·  ")
+	w, _ := m.sessionSize()
 	for n := len(hints); n >= 1; n-- {
 		second := "  " + strings.Join(hints[:n], sep)
-		if lipgloss.Width(second) <= m.width {
+		if lipgloss.Width(second) <= w {
 			return first + "\n" + second
 		}
 	}
@@ -2137,7 +2143,7 @@ func (m Model) renderTermPanes(w, h int) (string, *tea.Cursor) {
 		body := s.Render()
 		var cursor *tea.Cursor
 		if x, y, visible := s.Cursor(); visible {
-			cursor = tea.NewCursor(x, y+barHeight)
+			cursor = tea.NewCursor(x, y+m.barHeight())
 		}
 		return body, cursor
 	}
@@ -2159,7 +2165,7 @@ func (m Model) renderPaneNode(node *session.PaneNode, x, y, w, h int, ws *sessio
 		var cursor *tea.Cursor
 		if node.Idx == ws.ActiveTerm {
 			if cx, cy, visible := s.Cursor(); visible {
-				cursor = tea.NewCursor(x+cx, y+barHeight+cy)
+				cursor = tea.NewCursor(x+cx, y+m.barHeight()+cy)
 			}
 		}
 		return body, cursor
@@ -2352,39 +2358,49 @@ func windowBounds(n, cursor, height int) (int, int) {
 // stripItem is one worktree in the bar's agent strip, with its column span.
 type stripItem struct {
 	group      agentGroup
-	start, end int // absolute bar columns, end exclusive
+	more       bool // the "+N" for worktrees that don't fit; a click can open the side panel
+	start, end int  // absolute bar columns, end exclusive
 }
 
-// stripSep sits between the bar icons and the agent strip.
-var stripSep = "   " + barSep.Render("│") + "  "
+// stripSep lines the agent strip up with the bar's icons.
+const stripSep = "  "
 
-// agentStripLayout lays the agent strip out in the bar's first row, between the
-// icons and the right-side facts: each open worktree's name, coloured by its
+// stripRow is the bar row that holds the agent strip, under a blank row that
+// sets it apart from the icons.
+const stripRow = 2
+
+// stripShown reports whether the agent strip has its own row under the bar: it
+// is on, the side panel isn't listing the sessions, and a worktree is open. It
+// doesn't depend on the screen, so the bar keeps its height on the deck and
+// under overlays.
+func (m Model) stripShown() bool {
+	return m.agentStrip && m.sidePanelW() == 0 && len(m.stripEntries()) > 0
+}
+
+// agentStripLayout lays the agent strip out on its own row under the bar, so
+// it has the full width: each open worktree's name, coloured by its
 // agents (yellow working, green ✓ done, red ! waiting, white seen but not
 // answered or highlighted, dim idle), with the current worktree underlined. With more than
 // one repo open, each repo's worktrees follow its name. A gh stack you're not in
-// shows as one item, and the stack you're in follows its name. Repo names go first
-// when space is short, then names shorten, then items are dropped and show as
-// "+N". Returns "" when the strip is off or doesn't fit.
+// shows as one item, and the stack you're in follows its name. When space is
+// short, names shorten, then items are dropped and show as "+N", and only then
+// do repo names go. Returns "" when the strip isn't shown or doesn't fit.
 func (m Model) agentStripLayout() (string, []stripItem) {
-	if !m.agentStrip {
+	if !m.stripShown() {
 		return "", nil
 	}
 	groups := m.stripEntries()
-	if len(groups) == 0 {
-		return "", nil
-	}
-	leftW := lipgloss.Width(m.renderBarLeft())
-	avail := m.width - leftW - lipgloss.Width(m.barRightZones().text) - 1 - lipgloss.Width(stripSep)
+	avail := m.width - lipgloss.Width(stripSep) - 1
 	if avail < 8 {
 		return "", nil
 	}
 
-	// Repo names only help when the strip spans more than one repo.
+	// Repo names only help when the strip spans more than one repo, or one repo
+	// under two Claude accounts.
 	repos := map[string]bool{}
 	for _, g := range groups {
 		if g.key != m.homeWSKey {
-			repos[g.repo] = true
+			repos[g.repo+accountTag(g)] = true
 		}
 	}
 	// A worktree name shared by two repos needs its repo to tell them apart,
@@ -2408,53 +2424,40 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 	}
 	item := func(g agentGroup, maxW int, withRepo bool) string {
 		name := truncateTo(label(g, withRepo), maxW)
-		st := dimStyle
-		switch {
-		case g.attn == attnWaiting:
-			name, st = "! "+name, boldRed
-		case g.attn == attnDone:
-			name, st = "✓ "+name, boldGreen
-		case g.busy:
-			st = dirtyStyle
-		case g.attn == attnSeen || g.highlighted:
-			st = nameStyle
+		sign, _, st := m.stripLook(g, dimStyle)
+		if sign == "!" || sign == "✓" {
+			name = sign + " " + name
 		}
-		if m.current != nil && g.key == m.current.key {
-			st = st.Foreground(cAccent).Underline(true)
-		}
-		return stripBg(st, g).Render(name)
+		return onStack(st, g).Render(name)
 	}
 	// lead is what goes before item i: a separator, and the repo's name when
-	// item i starts a new repo. A gh stack's or an extra account's block keeps
-	// its background between its items; the separator before the block stays
-	// outside it.
+	// item i starts a new repo. A gh stack keeps its background between its
+	// items; the separator before the stack stays outside it.
 	lead := func(i int, withRepo bool) string {
 		g := groups[i]
-		newRepo := i == 0 || groups[i-1].repo != g.repo
-		inBlock := g.account != "" && i > 0 && groups[i-1].account == g.account
-		inStack := i > 0 && sameGhStack(groups[i-1], g)
+		newRepo := i == 0 || groups[i-1].repo != g.repo || groups[i-1].account != g.account
 		var s string
 		switch {
 		case i == 0:
 		case withRepo && newRepo:
-			s = onAccount(barSep, inBlock).Render(" │ ")
-		case inStack:
-			s = dimStyle.Background(cStackBg).Render(" · ")
+			s = barSep.Render(" │ ")
+		case sameGhStack(groups[i-1], g):
+			s = onStack(dimStyle, g).Render(" · ")
 		default:
-			s = onAccount(dimStyle, inBlock).Render(" · ")
+			s = dimStyle.Render(" · ")
 		}
 		if withRepo && newRepo && g.key != m.homeWSKey {
-			s += onAccount(barSep, g.account != "").Render(truncateTo(g.repo, 16) + ": ")
+			s += repoHdrStyle.Render(truncateTo(g.repo, 16)) + barSep.Render(": ")
 		}
-		if g.stack.Index > 0 && g.members == nil && (i == 0 || !sameGhStack(groups[i-1], g)) {
-			s += barSep.Background(cStackBg).Render(ghStackIcon + " " + truncateTo(g.stack.Name(), 16) + ": ")
+		if inGhStack(g) && (i == 0 || !sameGhStack(groups[i-1], g)) {
+			s += onStack(stackNameStyle, g).Render(ghStackIcon+" "+truncateTo(g.stack.Name(), 16)) + onStack(barSep, g).Render(": ")
 		}
 		return s
 	}
 
 	// Build the strip from the first n items, with "+N" for the rest.
 	build := func(texts []string, n int, withRepo bool) (string, []stripItem) {
-		col := leftW + lipgloss.Width(stripSep)
+		col := lipgloss.Width(stripSep)
 		var b strings.Builder
 		var items []stripItem
 		for i := range n {
@@ -2467,7 +2470,9 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 			col += w
 		}
 		if rest := len(texts) - n; rest > 0 {
-			b.WriteString(dimStyle.Render(" +" + strconv.Itoa(rest)))
+			more := dimStyle.Render(" +" + strconv.Itoa(rest))
+			b.WriteString(more)
+			items = append(items, stripItem{more: true, start: col + 1, end: col + lipgloss.Width(more)})
 		}
 		return stripSep + b.String(), items
 	}
@@ -2482,14 +2487,15 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 		return w
 	}
 
-	// Try with repo names, then without; each with full names, then shorter
-	// ones. Then drop items from the end.
+	// Try full names, then shorter ones, then drop items from the end. Repo
+	// names go last: without them the worktrees of different repos run
+	// together, and "+N" opens the side panel, which lists everything.
 	withRepos := []bool{false}
 	if len(repos) > 1 {
 		withRepos = []bool{true, false}
 	}
-	var texts []string
 	for _, withRepo := range withRepos {
+		var texts []string
 		for _, maxW := range []int{32, 16, 10} {
 			texts = texts[:0]
 			for _, g := range groups {
@@ -2499,10 +2505,10 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 				return build(texts, len(texts), withRepo)
 			}
 		}
-	}
-	for n := len(texts) - 1; n >= 1; n-- {
-		if width(texts, n, false) <= avail {
-			return build(texts, n, false)
+		for n := len(texts) - 1; n >= 1; n-- {
+			if width(texts, n, withRepo) <= avail {
+				return build(texts, n, withRepo)
+			}
 		}
 	}
 	return "", nil
@@ -2510,13 +2516,24 @@ func (m Model) agentStripLayout() (string, []stripItem) {
 
 // stripClick handles a left click on the agent strip.
 func (m Model) stripClick(x, y int) (tea.Model, tea.Cmd, bool) {
-	if y != 0 {
+	if y != stripRow {
 		return m, nil, false
 	}
 	_, items := m.agentStripLayout()
 	for _, it := range items {
 		if x < it.start || x >= it.end {
 			continue
+		}
+		if it.more {
+			// "+N" opens the side panel only where the panel would then show:
+			// not on the deck, under an overlay or in a narrow terminal.
+			opened := m
+			opened.sidePanel = true
+			if m.sidePanel || !opened.sidePanelShown() {
+				return m, nil, false
+			}
+			mm, cmd := m.toggleSidePanel()
+			return mm, cmd, true
 		}
 		mm, cmd := m.openStripGroup(it.group)
 		return mm, cmd, true
@@ -2543,19 +2560,54 @@ func (m Model) openStripGroup(g agentGroup) (tea.Model, tea.Cmd) {
 	return m.activate(g.repo, g.worktree, g.path)
 }
 
-// stripBg puts a strip item on its block's background: its gh stack's, else its
-// extra account's, else none.
-func stripBg(st lipgloss.Style, g agentGroup) lipgloss.Style {
+// stripLook is how the strip and the side panel show a worktree's agents: the
+// sign ("!" waiting, "✓" done, "●" working, "" otherwise), the sign's style, and
+// the name's style, which is underlined in the accent colour for the current
+// worktree. idle is the style of a worktree with nothing to show.
+func (m Model) stripLook(g agentGroup, idle lipgloss.Style) (sign string, signSt, nameSt lipgloss.Style) {
+	sign, signSt = "", idle
+	switch {
+	case g.attn == attnWaiting:
+		sign, signSt = "!", boldRed
+	case g.attn == attnDone:
+		sign, signSt = "✓", boldGreen
+	case g.busy:
+		sign, signSt = "●", dirtyStyle
+	case g.attn == attnSeen || g.highlighted:
+		signSt = nameStyle
+	}
+
+	nameSt = signSt
+	if m.current != nil && g.key == m.current.key {
+		nameSt = nameSt.Foreground(cAccent).Underline(true)
+	}
+	return sign, signSt, nameSt
+}
+
+// stackNameStyle names a gh stack in the strip: brighter than its worktrees,
+// dimmer than a repo name.
+var stackNameStyle = lipgloss.NewStyle().Foreground(cFg3)
+
+// onStack puts st on the gh stack background when g is in a stack, shown in
+// full or collapsed into one entry.
+func onStack(st lipgloss.Style, g agentGroup) lipgloss.Style {
 	if g.stack.Index > 0 {
 		return st.Background(cStackBg)
 	}
-	return onAccount(st, g.account != "")
+	return st
 }
 
-// onAccount puts st on the extra-account background when on is true.
-func onAccount(st lipgloss.Style, on bool) lipgloss.Style {
-	if on {
-		return st.Background(cAccountBg)
+// inGhStack reports whether g is one worktree of the gh stack you're in,
+// shown in full rather than collapsed into one entry.
+func inGhStack(g agentGroup) bool {
+	return g.stack.Index > 0 && g.members == nil
+}
+
+// accountTag names an extra Claude account after its repo (" · private"), as
+// nothing else marks its worktrees; "" for the default account.
+func accountTag(g agentGroup) string {
+	if g.account == "" {
+		return ""
 	}
-	return st
+	return " · " + g.account
 }

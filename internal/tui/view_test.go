@@ -41,7 +41,7 @@ func renderAllHelp(m Model) string {
 	previous := ""
 	for offset := 0; offset < 100; offset++ {
 		m.helpOffset = offset
-		page := m.renderHelp(m.height - barHeight)
+		page := m.renderHelp(m.height - m.barHeight())
 		if page == previous {
 			break
 		}
@@ -53,7 +53,7 @@ func renderAllHelp(m Model) string {
 
 func TestRenderLayout(t *testing.T) {
 	m := sampleModel()
-	out := m.renderDeck(m.height - barHeight)
+	out := m.renderDeck(m.height - m.barHeight())
 	for _, want := range []string{"NEW", "ACTIVE", "caretaker", "feat-login", "bugfix", "spike"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("render missing %q", want)
@@ -64,7 +64,7 @@ func TestRenderLayout(t *testing.T) {
 	}
 	if testing.Verbose() {
 		m.focus = focusActive
-		t.Logf("\n%s", m.renderDeck(m.height-barHeight))
+		t.Logf("\n%s", m.renderDeck(m.height-m.barHeight()))
 	}
 }
 
@@ -367,7 +367,7 @@ func TestBarNotifZone(t *testing.T) {
 	// Board header should show the agent count when open.
 	m.boardOpen = true
 	m.boardCursor = 0
-	board := m.renderBoard(m.height - barHeight)
+	board := m.renderBoard(m.height - m.barHeight())
 	if !strings.Contains(board, "2") {
 		t.Errorf("board header should show pool count 2:\n%s", board)
 	}
@@ -377,7 +377,7 @@ func TestBoardRender(t *testing.T) {
 	m := modelWithAgents(2)
 	mm, _ := m.openBoard()
 	m = mm.(Model)
-	out := m.renderBoard(m.height - barHeight)
+	out := m.renderBoard(m.height - m.barHeight())
 	for _, want := range []string{"AGENTS", "r/w", "claude", "new agent", "focus", "current"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("board missing %q:\n%s", want, out)
@@ -386,7 +386,7 @@ func TestBoardRender(t *testing.T) {
 
 	// The form renders the prompt input and the where toggle.
 	m = m.openNewAgentForm().(Model)
-	out = m.renderBoard(m.height - barHeight)
+	out = m.renderBoard(m.height - m.barHeight())
 	for _, want := range []string{"NEW AGENT", "What should Claude do?", "current: w", "home", "launch"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("form missing %q:\n%s", want, out)
@@ -407,7 +407,7 @@ func TestNewAgentFormIsWideWritingSurface(t *testing.T) {
 	if got, want := m.promptInput.Width(), 76; got != want {
 		t.Fatalf("prompt content width = %d, want %d", got, want)
 	}
-	out := m.renderBoard(m.height - barHeight)
+	out := m.renderBoard(m.height - m.barHeight())
 	if !strings.Contains(ansi.Strip(out), "╭"+strings.Repeat("─", 78)+"╮") {
 		t.Fatalf("new-agent prompt should render as a bordered 80-column writing surface:\n%s", out)
 	}
@@ -419,7 +419,7 @@ func TestBoardUsesFullPanelWidth(t *testing.T) {
 	mm, _ := m.openBoard()
 	m = mm.(Model)
 
-	out := m.renderBoard(m.height - barHeight)
+	out := m.renderBoard(m.height - m.barHeight())
 	lines := strings.Split(out, "\n")
 	frameWidth := 0
 	for _, line := range lines {
@@ -442,7 +442,7 @@ func TestBoardUsesFullPanelWidth(t *testing.T) {
 
 func TestProviderRowOnlyAppearsForMixedConfig(t *testing.T) {
 	claudeOnly := modelWithAgents(1).openNewAgentForm().(Model)
-	out := claudeOnly.renderBoard(claudeOnly.height - barHeight)
+	out := claudeOnly.renderBoard(claudeOnly.height - claudeOnly.barHeight())
 	if strings.Contains(out, "provider") || strings.Contains(out, "codex") {
 		t.Errorf("single-provider form should hide provider choice:\n%s", out)
 	}
@@ -450,7 +450,7 @@ func TestProviderRowOnlyAppearsForMixedConfig(t *testing.T) {
 	mixed := mixedProviderModel(agent.Codex)
 	mixed.width, mixed.height = 72, 24
 	mixed = mixed.openNewAgentForm().(Model)
-	out = mixed.renderBoard(mixed.height - barHeight)
+	out = mixed.renderBoard(mixed.height - mixed.barHeight())
 	for _, want := range []string{"provider", "claude", "codex"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("mixed-provider form missing %q:\n%s", want, out)
@@ -468,7 +468,7 @@ func TestMixedProviderBoardChips(t *testing.T) {
 		},
 	}}
 	m.boardOpen = true
-	out := m.renderBoard(m.height - barHeight)
+	out := m.renderBoard(m.height - m.barHeight())
 	for _, want := range []string{"claude", "amber-fox", "codex", "jade-otter", "restart"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("mixed board missing %q:\n%s", want, out)
@@ -512,6 +512,6 @@ func TestCreateModeInlineInput(t *testing.T) {
 		t.Errorf("footer should not contain the input prompt in create mode")
 	}
 	if testing.Verbose() {
-		t.Logf("\n%s", m.renderDeck(m.height-barHeight))
+		t.Logf("\n%s", m.renderDeck(m.height-m.barHeight()))
 	}
 }
